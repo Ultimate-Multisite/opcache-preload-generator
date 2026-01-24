@@ -51,10 +51,20 @@
 			$('#opcache-delete-btn').on('click', this.deletePreload.bind(this));
 			$('.opcache-copy-btn').on('click', this.copyToClipboard.bind(this));
 
+			// Optimize tab
+			$('#opcache-start-optimize').on('click', this.startOptimize.bind(this));
+			$('#opcache-stop-optimize').on('click', this.stopOptimize.bind(this));
+			$('#opcache-reset-optimize').on('click', this.resetOptimize.bind(this));
+
 			// Modal
 			$('.opcache-modal-close').on('click', this.closeModal.bind(this));
 			$(window).on('click', this.closeModalOnOutsideClick.bind(this));
 		},
+
+		// Optimization state
+		optimizing: false,
+		optimizeState: null,
+		totalCandidates: 0,
 
 		analyzeSuggested: function() {
 			var self = this;
@@ -746,6 +756,289 @@
 			}).catch(function() {
 				alert(opcachePreload.i18n.copy_failed);
 			});
+		},
+
+		// Optimization functions
+		startOptimize: function() {
+			var self = this;
+			var maxFiles = $('#optimize-max-files').val();
+
+			$('#opcache-start-optimize').prop('disabled', true).text(opcachePreload.i18n.opt_starting);
+			$('#opcache-stop-optimize').prop('disabled', false);
+			$('#opcache-reset-optimize').prop('disabled', true);
+			$('#optimize-progress').show();
+			$('#optimize-log').show();
+
+			this.optimizing = true;
+
+			$.ajax({
+				url: opcachePreload.ajaxUrl,
+				type: 'POST',
+				data: {
+					action: 'opcache_preload_start_optimize',
+					nonce: opcachePreload.nonce,
+					max_files: maxFiles
+				},
+				success: function(response) {
+					if (!response.success) {
+						self.optimizing = false;
+						$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+						$('#opcache-stop-optimize').prop('disabled', true);
+						alert(opcachePreload.i18n.opt_error + ' ' + response.data.error);
+						return;
+					}
+
+					self.optimizeState = response.data.state;
+					self.totalCandidates = response.data.candidates_count;
+					self.updateOptimizeUI();
+					self.addLogEntry('Started optimization with ' + self.totalCandidates + ' candidate files');
+
+					// Run baseline test
+					self.runBaselineTest();
+				},
+				error: function() {
+					self.optimizing = false;
+					$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+					$('#opcache-stop-optimize').prop('disabled', true);
+					alert(opcachePreload.i18n.opt_error + ' Request failed');
+				}
+			});
+		},
+
+		runBaselineTest: function() {
+			var self = this;
+
+			if (!this.optimizing) return;
+
+			$('#optimize-status-text').text(opcachePreload.i18n.opt_baseline);
+			$('#optimize-phase-text').text(opcachePreload.i18n.opt_baseline);
+
+			$.ajax({
+				url: opcachePreload.ajaxUrl,
+				type: 'POST',
+				data: {
+					action: 'opcache_preload_run_baseline',
+					nonce: opcachePreload.nonce
+				},
+				success: function(response) {
+					if (!response.success) {
+						self.optimizing = false;
+						self.handleOptimizeError(response.data.error);
+						return;
+					}
+
+					self.optimizeState = response.data.state;
+					self.updateOptimizeUI();
+					self.addLogEntry('Baseline: ' + response.data.baseline_time + ' ms');
+
+					// Start processing files
+					self.processNextFile();
+				},
+				error: function() {
+					self.optimizing = false;
+					self.handleOptimizeError('Baseline test request failed');
+				}
+			});
+		},
+
+		processNextFile: function() {
+			var self = this;
+
+			if (!this.optimizing) return;
+
+			$('#optimize-status-text').text(opcachePreload.i18n.opt_testing);
+			$('#optimize-phase-text').text(opcachePreload.i18n.opt_testing);
+
+			$.ajax({
+				url: opcachePreload.ajaxUrl,
+				type: 'POST',
+				data: {
+					action: 'opcache_preload_process_next',
+					nonce: opcachePreload.nonce
+				},
+				success: function(response) {
+					if (!response.success) {
+						self.optimizing = false;
+						self.handleOptimizeError(response.data.error);
+						return;
+					}
+
+					self.optimizeState = response.data.state;
+					self.updateOptimizeUI();
+
+					// Check if completed
+					if (response.data.completed) {
+						self.optimizing = false;
+						self.handleOptimizeComplete(response.data);
+						return;
+					}
+
+					// Log result
+					if (response.data.file_status === 'added') {
+						self.addLogEntry('<code>' + self.getBasename(response.data.file) + '</code> → ' + response.data.time_ms + ' ms', 'success');
+					} else if (response.data.file_status === 'failed') {
+						self.addLogEntry('<code>' + self.getBasename(response.data.file) + '</code> failed: ' + response.data.error, 'error');
+					}
+
+					// Continue with next file
+					if (self.optimizing) {
+						setTimeout(function() {
+							self.processNextFile();
+						}, 100);
+					}
+				},
+				error: function() {
+					self.optimizing = false;
+					self.handleOptimizeError('Request failed');
+				}
+			});
+		},
+
+		stopOptimize: function() {
+			var self = this;
+
+			this.optimizing = false;
+
+			$.ajax({
+				url: opcachePreload.ajaxUrl,
+				type: 'POST',
+				data: {
+					action: 'opcache_preload_stop_optimize',
+					nonce: opcachePreload.nonce
+				},
+				success: function(response) {
+					if (response.success) {
+						self.optimizeState = response.data.state;
+						self.updateOptimizeUI();
+						self.addLogEntry(opcachePreload.i18n.opt_stopped, 'warning');
+					}
+
+					$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+					$('#opcache-stop-optimize').prop('disabled', true);
+					$('#opcache-reset-optimize').prop('disabled', false);
+					$('#optimize-status-text').text('Paused');
+				}
+			});
+		},
+
+		resetOptimize: function() {
+			var self = this;
+
+			if (!confirm(opcachePreload.i18n.confirm_reset)) {
+				return;
+			}
+
+			$.ajax({
+				url: opcachePreload.ajaxUrl,
+				type: 'POST',
+				data: {
+					action: 'opcache_preload_reset_optimize',
+					nonce: opcachePreload.nonce
+				},
+				success: function(response) {
+					if (response.success) {
+						// Reset UI
+						$('#optimize-status-text').text('Ready');
+						$('#optimize-phase-text').text('');
+						$('#optimize-baseline-time').text('—');
+						$('#optimize-best-time').text('—');
+						$('#optimize-time-saved').text('—');
+						$('#optimize-progress').hide();
+						$('#optimize-log-entries').empty();
+						$('#optimize-log').hide();
+						$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+						$('#opcache-stop-optimize').prop('disabled', true);
+						$('#opcache-reset-optimize').prop('disabled', true);
+
+						self.optimizeState = null;
+						self.totalCandidates = 0;
+					}
+				}
+			});
+		},
+
+		updateOptimizeUI: function() {
+			var state = this.optimizeState;
+			if (!state) return;
+
+			// Update status
+			var statusLabels = {
+				'idle': 'Ready',
+				'running': 'Running',
+				'paused': 'Paused',
+				'completed': 'Completed',
+				'error': 'Error'
+			};
+			$('#optimize-status-text').text(statusLabels[state.status] || state.status);
+
+			// Update times
+			if (state.baseline_time > 0) {
+				$('#optimize-baseline-time').text(state.baseline_time + ' ms');
+			}
+			if (state.best_time > 0) {
+				$('#optimize-best-time').text(state.best_time + ' ms');
+			}
+			if (state.time_saved_ms > 0) {
+				$('#optimize-time-saved').text(state.time_saved_ms + ' ms (' + state.time_saved_pct + '%)');
+			}
+
+			// Update progress
+			$('#optimize-files-tested').text(state.files_tested + ' ' + opcachePreload.i18n.files_tested);
+			$('#optimize-files-added').text(state.files_added + ' ' + opcachePreload.i18n.added);
+			$('#optimize-files-failed').text(state.files_failed + ' ' + opcachePreload.i18n.failed);
+
+			// Update progress bar
+			var progress = this.totalCandidates > 0 ? (state.files_tested / this.totalCandidates) * 100 : 0;
+			$('#optimize-progress-bar').css('width', progress + '%');
+
+			// Update current file
+			if (state.current_file) {
+				$('#optimize-current-file').html(opcachePreload.i18n.testing + ' <code>' + state.current_file + '</code>');
+			} else {
+				$('#optimize-current-file').text('');
+			}
+		},
+
+		handleOptimizeError: function(error) {
+			$('#optimize-status-text').text('Error');
+			$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+			$('#opcache-stop-optimize').prop('disabled', true);
+			$('#opcache-reset-optimize').prop('disabled', false);
+			this.addLogEntry(opcachePreload.i18n.opt_error + ' ' + error, 'error');
+		},
+
+		handleOptimizeComplete: function(data) {
+			$('#optimize-status-text').text('Completed');
+			$('#optimize-phase-text').text('');
+			$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+			$('#opcache-stop-optimize').prop('disabled', true);
+			$('#opcache-reset-optimize').prop('disabled', false);
+			$('#optimize-current-file').text('');
+
+			var message = opcachePreload.i18n.opt_complete + ' ';
+			message += data.files_added + ' files added. ';
+			message += 'Time saved: ' + data.time_saved_ms + ' ms (' + data.time_saved_pct + '%)';
+
+			this.addLogEntry(message, 'complete');
+		},
+
+		addLogEntry: function(message, type) {
+			type = type || 'info';
+			var time = new Date().toLocaleTimeString();
+			var entry = '<div class="opcache-log-entry opcache-log-' + type + '">';
+			entry += '<span class="opcache-log-time">' + time + '</span>';
+			entry += '<span class="opcache-log-message">' + message + '</span>';
+			entry += '</div>';
+
+			$('#optimize-log-entries').append(entry);
+
+			// Scroll to bottom
+			var $log = $('#optimize-log-entries');
+			$log.scrollTop($log[0].scrollHeight);
+		},
+
+		getBasename: function(path) {
+			return path.split('/').pop();
 		},
 
 		formatBytes: function(bytes) {

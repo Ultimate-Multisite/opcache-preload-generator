@@ -115,6 +115,7 @@ class Admin_Page {
 				'i18n'    => [
 					'confirm_delete'    => __('Are you sure you want to delete the preload file? You should update your php.ini configuration first.', 'opcache-preload-generator'),
 					'confirm_remove'    => __('Are you sure you want to remove this file from the preload list?', 'opcache-preload-generator'),
+					'confirm_reset'     => __('Are you sure you want to reset the optimization? This will clear the current progress.', 'opcache-preload-generator'),
 					'analyzing'         => __('Analyzing...', 'opcache-preload-generator'),
 					'generating'        => __('Generating...', 'opcache-preload-generator'),
 					'success'           => __('Success!', 'opcache-preload-generator'),
@@ -122,6 +123,16 @@ class Admin_Page {
 					'copied'            => __('Copied to clipboard!', 'opcache-preload-generator'),
 					'copy_failed'       => __('Failed to copy. Please select and copy manually.', 'opcache-preload-generator'),
 					'no_files_selected' => __('No files selected for analysis.', 'opcache-preload-generator'),
+					'opt_starting'      => __('Starting optimization...', 'opcache-preload-generator'),
+					'opt_baseline'      => __('Running baseline test...', 'opcache-preload-generator'),
+					'opt_testing'       => __('Testing files...', 'opcache-preload-generator'),
+					'opt_complete'      => __('Optimization complete!', 'opcache-preload-generator'),
+					'opt_stopped'       => __('Optimization stopped.', 'opcache-preload-generator'),
+					'opt_error'         => __('Optimization error:', 'opcache-preload-generator'),
+					'files_tested'      => __('files tested', 'opcache-preload-generator'),
+					'added'             => __('added', 'opcache-preload-generator'),
+					'failed'            => __('failed', 'opcache-preload-generator'),
+					'testing'           => __('Testing:', 'opcache-preload-generator'),
 				],
 			]
 		);
@@ -145,6 +156,7 @@ class Admin_Page {
 
 		$tabs = [
 			'overview' => __('Overview', 'opcache-preload-generator'),
+			'optimize' => __('Auto-Optimize', 'opcache-preload-generator'),
 			'files'    => __('Manage Files', 'opcache-preload-generator'),
 			'analyze'  => __('Analyze Files', 'opcache-preload-generator'),
 			'generate' => __('Generate', 'opcache-preload-generator'),
@@ -162,7 +174,7 @@ class Admin_Page {
 	 */
 	public function get_tab_content_file(string $tab): string {
 
-		$valid_tabs = ['overview', 'files', 'analyze', 'generate', 'help'];
+		$valid_tabs = ['overview', 'optimize', 'files', 'analyze', 'generate', 'help'];
 
 		if (! in_array($tab, $valid_tabs, true)) {
 			$tab = 'overview';

@@ -438,6 +438,133 @@
 	margin-bottom: 5px;
 }
 
+/* Optimize Tab */
+.opcache-optimize-tab h2 {
+	margin-bottom: 10px;
+}
+
+.opcache-optimize-status {
+	margin-bottom: 20px;
+}
+
+.opcache-optimize-progress {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-top: 20px;
+}
+
+.opcache-optimize-progress h3 {
+	margin-top: 0;
+	margin-bottom: 15px;
+}
+
+.opcache-progress-stats {
+	display: flex;
+	gap: 15px;
+	margin-bottom: 15px;
+	flex-wrap: wrap;
+}
+
+.opcache-current-file {
+	margin-top: 10px;
+	color: #646970;
+}
+
+.opcache-current-file code {
+	word-break: break-all;
+}
+
+.opcache-optimize-controls {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-button-group {
+	display: flex;
+	gap: 10px;
+	margin-top: 15px;
+}
+
+.opcache-optimize-log {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-optimize-log h3 {
+	margin-top: 0;
+	margin-bottom: 15px;
+}
+
+.opcache-log-entries {
+	max-height: 300px;
+	overflow-y: auto;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 12px;
+	background: #1d2327;
+	color: #f0f0f1;
+	padding: 10px;
+	border-radius: 4px;
+}
+
+.opcache-log-entry {
+	padding: 4px 0;
+	border-bottom: 1px solid #3c434a;
+}
+
+.opcache-log-entry:last-child {
+	border-bottom: none;
+}
+
+.opcache-log-time {
+	color: #8c8f94;
+	margin-right: 10px;
+}
+
+.opcache-log-message code {
+	background: #2c3338;
+	padding: 2px 6px;
+	border-radius: 3px;
+	color: #72aee6;
+}
+
+.opcache-log-success .opcache-log-message {
+	color: #68de7c;
+}
+
+.opcache-log-error .opcache-log-message {
+	color: #f86368;
+}
+
+.opcache-log-warning .opcache-log-message {
+	color: #f0c33c;
+}
+
+.opcache-log-complete .opcache-log-message {
+	color: #68de7c;
+	font-weight: bold;
+}
+
+.opcache-optimize-failed {
+	background: #fcf0f1;
+	border: 1px solid #d63638;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-optimize-failed h3 {
+	margin-top: 0;
+	color: #8a2424;
+}
+
 /* Responsive */
 @media screen and (max-width: 782px) {
 	.opcache-cards {

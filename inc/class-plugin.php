@@ -67,6 +67,20 @@ class Plugin {
 	public ?Ajax_Handler $ajax_handler = null;
 
 	/**
+	 * Preload tester instance.
+	 *
+	 * @var Preload_Tester|null
+	 */
+	public ?Preload_Tester $preload_tester = null;
+
+	/**
+	 * Auto optimizer instance.
+	 *
+	 * @var Auto_Optimizer|null
+	 */
+	public ?Auto_Optimizer $auto_optimizer = null;
+
+	/**
 	 * Main instance.
 	 *
 	 * @return Plugin
@@ -115,6 +129,8 @@ class Plugin {
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-opcache-analyzer.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-file-safety-analyzer.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-generator.php';
+		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-tester.php';
+		require_once OPCACHE_PRELOAD_DIR . 'inc/class-auto-optimizer.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-admin-page.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-ajax-handler.php';
 
@@ -133,6 +149,8 @@ class Plugin {
 		$this->opcache_analyzer  = new OPcache_Analyzer();
 		$this->safety_analyzer   = new File_Safety_Analyzer();
 		$this->preload_generator = new Preload_Generator($this->safety_analyzer);
+		$this->preload_tester    = new Preload_Tester();
+		$this->auto_optimizer    = new Auto_Optimizer($this, $this->preload_tester);
 
 		if (is_admin()) {
 			$this->admin_page   = new Admin_Page($this);

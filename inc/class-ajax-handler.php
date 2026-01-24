@@ -42,6 +42,14 @@ class Ajax_Handler {
 		add_action('wp_ajax_opcache_preload_delete', [$this, 'delete_preload']);
 		add_action('wp_ajax_opcache_preload_save_settings', [$this, 'save_settings']);
 		add_action('wp_ajax_opcache_preload_preview', [$this, 'preview_preload']);
+
+		// Auto-optimization AJAX handlers.
+		add_action('wp_ajax_opcache_preload_start_optimize', [$this, 'start_optimize']);
+		add_action('wp_ajax_opcache_preload_run_baseline', [$this, 'run_baseline']);
+		add_action('wp_ajax_opcache_preload_process_next', [$this, 'process_next']);
+		add_action('wp_ajax_opcache_preload_stop_optimize', [$this, 'stop_optimize']);
+		add_action('wp_ajax_opcache_preload_get_optimize_state', [$this, 'get_optimize_state']);
+		add_action('wp_ajax_opcache_preload_reset_optimize', [$this, 'reset_optimize']);
 	}
 
 	/**
@@ -537,6 +545,126 @@ class Ajax_Handler {
 				'file_count' => count($files_config),
 			]
 		);
+	}
+
+	/**
+	 * Start the auto-optimization process.
+	 *
+	 * @return void
+	 */
+	public function start_optimize(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
+		$max_files = isset($_POST['max_files']) ? absint($_POST['max_files']) : 100;
+		$max_files = min($max_files, 500); // Cap at 500 for safety.
+
+		$result = $this->plugin->auto_optimizer->start($max_files);
+
+		if ($result['success']) {
+			wp_send_json_success($result);
+		} else {
+			wp_send_json_error($result);
+		}
+	}
+
+	/**
+	 * Run the baseline test.
+	 *
+	 * @return void
+	 */
+	public function run_baseline(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		$result = $this->plugin->auto_optimizer->run_baseline_test();
+
+		if ($result['success']) {
+			wp_send_json_success($result);
+		} else {
+			wp_send_json_error($result);
+		}
+	}
+
+	/**
+	 * Process the next file in the optimization queue.
+	 *
+	 * @return void
+	 */
+	public function process_next(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		$result = $this->plugin->auto_optimizer->process_next_file();
+
+		if ($result['success']) {
+			wp_send_json_success($result);
+		} else {
+			wp_send_json_error($result);
+		}
+	}
+
+	/**
+	 * Stop the optimization process.
+	 *
+	 * @return void
+	 */
+	public function stop_optimize(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		$result = $this->plugin->auto_optimizer->stop();
+
+		if ($result['success']) {
+			wp_send_json_success($result);
+		} else {
+			wp_send_json_error($result);
+		}
+	}
+
+	/**
+	 * Get the current optimization state.
+	 *
+	 * @return void
+	 */
+	public function get_optimize_state(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		$state = $this->plugin->auto_optimizer->get_state();
+
+		wp_send_json_success(['state' => $state]);
+	}
+
+	/**
+	 * Reset the optimization state.
+	 *
+	 * @return void
+	 */
+	public function reset_optimize(): void {
+
+		if (! $this->verify_request()) {
+			return;
+		}
+
+		// Clean up test file.
+		$this->plugin->preload_tester->delete_test_file();
+
+		// Reset state.
+		$this->plugin->auto_optimizer->reset_state();
+
+		wp_send_json_success(['message' => __('Optimization state reset.', 'opcache-preload-generator')]);
 	}
 
 	/**
