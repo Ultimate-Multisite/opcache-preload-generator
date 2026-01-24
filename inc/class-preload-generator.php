@@ -25,13 +25,29 @@ class Preload_Generator {
 	private File_Safety_Analyzer $safety_analyzer;
 
 	/**
+	 * Dependency resolver instance.
+	 *
+	 * @var Dependency_Resolver
+	 */
+	private Dependency_Resolver $dependency_resolver;
+
+	/**
+	 * Files skipped during last generation due to unresolved dependencies.
+	 *
+	 * @var array<array{path: string, dependencies: array<string>}>
+	 */
+	private array $skipped_files = [];
+
+	/**
 	 * Constructor.
 	 *
-	 * @param File_Safety_Analyzer $safety_analyzer File safety analyzer instance.
+	 * @param File_Safety_Analyzer $safety_analyzer     File safety analyzer instance.
+	 * @param Dependency_Resolver  $dependency_resolver Dependency resolver instance.
 	 */
-	public function __construct(File_Safety_Analyzer $safety_analyzer) {
+	public function __construct(File_Safety_Analyzer $safety_analyzer, Dependency_Resolver $dependency_resolver) {
 
-		$this->safety_analyzer = $safety_analyzer;
+		$this->safety_analyzer     = $safety_analyzer;
+		$this->dependency_resolver = $dependency_resolver;
 	}
 
 	/**
@@ -44,14 +60,20 @@ class Preload_Generator {
 	public function generate(array $files, array $options = []): string {
 
 		$defaults = [
-			'use_require'    => true,
-			'include_header' => true,
-			'validate_files' => true,
-			'output_path'    => '',
-			'abspath'        => ABSPATH,
+			'use_require'          => true,
+			'include_header'       => true,
+			'validate_files'       => true,
+			'output_path'          => '',
+			'abspath'              => ABSPATH,
+			'resolve_dependencies' => true,
 		];
 
 		$options = wp_parse_args($options, $defaults);
+
+		// Sort files by dependencies and handle unresolvable ones.
+		if ($options['resolve_dependencies']) {
+			$files = $this->sort_files_by_dependencies($files, $options);
+		}
 
 		$content = '';
 
@@ -63,6 +85,116 @@ class Preload_Generator {
 		$content .= $this->generate_file_includes($files, $options);
 
 		return $content;
+	}
+
+	/**
+	 * Sort files by dependency order and mark unresolvable files.
+	 *
+	 * Files with unresolvable dependencies (parent classes not in list)
+	 * will use opcache_compile_file instead of require_once.
+	 *
+	 * @param array<string|array<string, mixed>> $files   Array of file paths or file config arrays.
+	 * @param array<string, mixed>               $options Generation options.
+	 * @return array<array<string, mixed>> Sorted files with method set.
+	 */
+	private function sort_files_by_dependencies(array $files, array $options): array {
+
+		$default_method = $options['use_require'] ? 'require_once' : 'opcache_compile_file';
+
+		// Normalize files to config array format and extract paths.
+		$normalized = [];
+		$paths      = [];
+
+		foreach ($files as $file) {
+			if (is_array($file)) {
+				$path   = $file['path'] ?? '';
+				$method = $file['method'] ?? $default_method;
+			} else {
+				$path   = $file;
+				$method = $default_method;
+			}
+
+			if (empty($path) || ! file_exists($path)) {
+				continue;
+			}
+
+			$paths[]      = $path;
+			$normalized[] = [
+				'path'   => $path,
+				'method' => $method,
+			];
+		}
+
+		if (empty($paths)) {
+			return [];
+		}
+
+		// Build class map for all files.
+		$this->dependency_resolver->clear_cache();
+		$this->dependency_resolver->build_class_map($paths);
+
+		// Sort by dependencies.
+		$sorted = $this->dependency_resolver->sort_by_dependencies($paths);
+
+		// Build result with proper method assignment.
+		$result       = [];
+		$sorted_paths = $sorted['sorted'];
+		$unresolvable = $sorted['unresolvable'];
+
+		// Create a lookup for original method settings.
+		$method_lookup = [];
+		foreach ($normalized as $file) {
+			$method_lookup[ $file['path'] ] = $file['method'];
+		}
+
+		// Reset skipped files tracking.
+		$this->skipped_files = [];
+
+		// Add sorted files, but skip those with unresolved dependencies.
+		// Files with unresolved dependencies cannot be preloaded because
+		// PHP cannot compile a class whose parent class doesn't exist.
+		foreach ($sorted_paths as $path) {
+			$original_method = $method_lookup[ $path ] ?? $default_method;
+
+			// Check for unresolved dependencies in this file.
+			$unresolved = $this->dependency_resolver->get_unresolved_dependencies($path, $sorted_paths);
+
+			// Skip files with unresolved dependencies - they cannot be preloaded.
+			if (! empty($unresolved)) {
+				$this->skipped_files[] = [
+					'path'         => $path,
+					'reason'       => 'unresolved_dependencies',
+					'dependencies' => $unresolved,
+				];
+				continue;
+			}
+
+			$result[] = [
+				'path'   => $path,
+				'method' => $original_method,
+			];
+		}
+
+		// Track unresolvable files (circular dependencies).
+		foreach ($unresolvable as $path) {
+			$this->skipped_files[] = [
+				'path'         => $path,
+				'reason'       => 'circular_dependency',
+				'dependencies' => [],
+			];
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Get files that were skipped during the last generation.
+	 *
+	 * @return array<array{path: string, reason: string, dependencies: array<string>}>
+	 */
+	public function get_skipped_files(): array {
+
+		return $this->skipped_files;
 	}
 
 	/**
