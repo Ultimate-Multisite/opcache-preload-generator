@@ -1,0 +1,461 @@
+/**
+ * OPcache Preload Generator Admin Styles
+ *
+ * @package OPcache_Preload_Generator
+ */
+
+/* General */
+.opcache-preload-wrap {
+	max-width: 1200px;
+}
+
+.opcache-preload-content {
+	margin-top: 20px;
+}
+
+/* Cards */
+.opcache-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 20px;
+	margin-bottom: 30px;
+}
+
+.opcache-card {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+}
+
+.opcache-card h3 {
+	margin-top: 0;
+	margin-bottom: 15px;
+	font-size: 14px;
+	color: #1d2327;
+}
+
+.opcache-card-success {
+	border-color: #00a32a;
+	background: #f0f9f1;
+}
+
+.opcache-card-error {
+	border-color: #d63638;
+	background: #fcf0f1;
+}
+
+/* Stats */
+.opcache-stat-large {
+	font-size: 32px;
+	font-weight: 600;
+	color: #1d2327;
+	line-height: 1.2;
+}
+
+.opcache-stat-large small {
+	font-size: 14px;
+	font-weight: 400;
+	color: #646970;
+}
+
+.opcache-stat-label {
+	margin-top: 10px;
+	color: #646970;
+	font-size: 13px;
+}
+
+.opcache-stat-success {
+	color: #00a32a;
+}
+
+/* Progress Bar */
+.opcache-progress-bar {
+	height: 8px;
+	background: #dcdcde;
+	border-radius: 4px;
+	margin-top: 15px;
+	overflow: hidden;
+}
+
+.opcache-progress-fill {
+	height: 100%;
+	background: #2271b1;
+	border-radius: 4px;
+	transition: width 0.3s ease;
+}
+
+/* Badges */
+.opcache-badge {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 3px;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1.5;
+}
+
+.opcache-badge-safe {
+	background: #d1f5d3;
+	color: #006908;
+}
+
+.opcache-badge-warning {
+	background: #fcf9e8;
+	color: #996800;
+}
+
+.opcache-badge-error {
+	background: #fcf0f1;
+	color: #8a2424;
+}
+
+.opcache-badge-info {
+	background: #e5f5fa;
+	color: #0a4b78;
+}
+
+/* Quick Actions */
+.opcache-quick-actions {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+}
+
+.opcache-quick-actions h3 {
+	margin-top: 0;
+}
+
+.opcache-quick-actions .button {
+	margin-right: 10px;
+	margin-bottom: 5px;
+}
+
+/* Forms */
+.opcache-form-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 15px;
+}
+
+.opcache-form-row label {
+	font-weight: 500;
+}
+
+.opcache-add-file-form {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-add-file-form h3 {
+	margin-top: 0;
+}
+
+/* File List */
+.opcache-full-path {
+	color: #646970;
+	word-break: break-all;
+}
+
+.column-status {
+	width: 120px;
+}
+
+.column-hits,
+.column-memory {
+	width: 100px;
+}
+
+.column-actions {
+	width: 150px;
+}
+
+/* Analyze Tab */
+.opcache-analyze-controls {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-results-summary {
+	margin-bottom: 15px;
+}
+
+.opcache-results-summary span {
+	margin-right: 20px;
+}
+
+.opcache-results-actions {
+	margin-bottom: 15px;
+	display: flex;
+	align-items: center;
+	gap: 15px;
+}
+
+.opcache-checkbox-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+/* Pagination */
+#opcache-pagination-top,
+#opcache-pagination-bottom {
+	display: flex;
+	justify-content: flex-end;
+}
+
+#opcache-pagination-top .tablenav-pages,
+#opcache-pagination-bottom .tablenav-pages {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.opcache-current-page {
+	width: 60px;
+	text-align: center;
+}
+
+.pagination-links .button {
+	min-width: 30px;
+	padding: 0 8px;
+}
+
+#opcache-results-table {
+	margin-top: 0;
+}
+
+.opcache-result-row.opcache-result-error {
+	background-color: #fcf0f1;
+}
+
+.opcache-result-row.opcache-result-warning {
+	background-color: #fcf9e8;
+}
+
+.opcache-already-added {
+	color: #646970;
+	font-style: italic;
+}
+
+#opcache-analyze-loading {
+	padding: 40px;
+	text-align: center;
+}
+
+#opcache-analyze-loading .spinner {
+	float: none;
+	margin-right: 10px;
+}
+
+/* Generate Tab */
+.opcache-existing-file {
+	background: #e5f5fa;
+	border: 1px solid #72aee6;
+	border-radius: 4px;
+	padding: 15px 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-existing-file h3 {
+	margin-top: 0;
+	color: #0a4b78;
+}
+
+.opcache-existing-file .form-table th {
+	width: 150px;
+	padding: 8px 0;
+}
+
+.opcache-existing-file .form-table td {
+	padding: 8px 0;
+}
+
+.opcache-generate-settings,
+.opcache-preview-section,
+.opcache-generate-actions,
+.opcache-phpini-section {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-generate-settings h3,
+.opcache-preview-section h3,
+.opcache-generate-actions h3,
+.opcache-phpini-section h3 {
+	margin-top: 0;
+}
+
+#opcache-preview-content {
+	font-family: Consolas, Monaco, monospace;
+	font-size: 12px;
+	background: #f6f7f7;
+}
+
+.opcache-code-block {
+	position: relative;
+}
+
+.opcache-code-block pre {
+	background: #1d2327;
+	color: #f0f0f1;
+	padding: 15px;
+	border-radius: 4px;
+	overflow-x: auto;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.opcache-code-block .opcache-copy-btn {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+}
+
+/* Help Tab */
+.opcache-help-tab {
+	max-width: 900px;
+}
+
+.opcache-help-section {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-help-section h3 {
+	margin-top: 0;
+}
+
+.opcache-help-section ol,
+.opcache-help-section ul {
+	margin-left: 20px;
+}
+
+.opcache-help-section ol li,
+.opcache-help-section ul li {
+	margin-bottom: 15px;
+}
+
+.opcache-help-section ol li strong,
+.opcache-help-section ul li strong {
+	display: block;
+	margin-bottom: 5px;
+}
+
+.opcache-help-section dl dt {
+	font-weight: 600;
+	margin-top: 15px;
+}
+
+.opcache-help-section dl dd {
+	margin-left: 0;
+	margin-bottom: 10px;
+	color: #646970;
+}
+
+/* Result Messages */
+.opcache-result-message {
+	padding: 12px;
+	border-radius: 4px;
+	margin-top: 15px;
+}
+
+.opcache-result-message.success {
+	background: #d1f5d3;
+	color: #006908;
+	border: 1px solid #00a32a;
+}
+
+.opcache-result-message.error {
+	background: #fcf0f1;
+	color: #8a2424;
+	border: 1px solid #d63638;
+}
+
+/* Modal */
+.opcache-modal {
+	display: none;
+	position: fixed;
+	z-index: 100000;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	background-color: rgba(0, 0, 0, 0.5);
+}
+
+.opcache-modal-content {
+	background-color: #fff;
+	margin: 5% auto;
+	padding: 20px;
+	border-radius: 4px;
+	width: 80%;
+	max-width: 700px;
+	max-height: 80vh;
+	overflow-y: auto;
+	position: relative;
+}
+
+.opcache-modal-close {
+	position: absolute;
+	right: 15px;
+	top: 10px;
+	font-size: 28px;
+	font-weight: bold;
+	color: #646970;
+	cursor: pointer;
+}
+
+.opcache-modal-close:hover {
+	color: #1d2327;
+}
+
+.opcache-modal h2 {
+	margin-top: 0;
+	padding-right: 30px;
+}
+
+.opcache-modal-body ul {
+	margin-left: 20px;
+}
+
+.opcache-modal-body li {
+	margin-bottom: 5px;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+	.opcache-cards {
+		grid-template-columns: 1fr;
+	}
+
+	.opcache-form-row {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.opcache-results-actions {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.column-hits,
+	.column-memory {
+		display: none;
+	}
+}

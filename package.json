@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "name": "opcache-preload-generator",
+  "title": "OPcache Preload Generator",
+  "homepage": "https://multisiteultimate.com/",
+  "authors": [{
+    "name": "David Stone",
+    "email": "david@multisiteultimate.com"
+  }],
+  "devDependencies": {
+    "clean-css-cli": "^5.6.3",
+    "uglify-js": "^3.19.3"
+  },
+  "scripts": {
+    "test": "vendor/bin/phpunit",
+    "test:watch": "vendor/bin/phpunit --testdox",
+    "build": "composer install -o --no-dev",
+    "build:dev": "composer install"
+  }
+}
