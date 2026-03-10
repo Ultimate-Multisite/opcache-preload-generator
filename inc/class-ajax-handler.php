@@ -535,10 +535,14 @@ class Ajax_Handler {
 		}
 
 		$options = [
-			'use_require'    => $settings['use_require'],
-			'validate_files' => true,
-			'output_path'    => $settings['output_path'],
-			'abspath'        => ABSPATH,
+			'use_require'          => $settings['use_require'],
+			'validate_files'       => true,
+			'output_path'          => $settings['output_path'],
+			'abspath'              => ABSPATH,
+			'docket_cache_warmup'  => $settings['docket_cache_warmup'] ?? false,
+			'docket_cache_options' => [
+				'max_keys' => $settings['docket_cache_max_keys'] ?? 50,
+			],
 		];
 
 		$content = $this->plugin->preload_generator->preview($files_config, $options);
