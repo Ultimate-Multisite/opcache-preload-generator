@@ -403,14 +403,10 @@ class Ajax_Handler {
 		// Generate file with safety options.
 		$output_path = $settings['output_path'];
 		$options     = [
-			'use_require'          => $settings['use_require'],
-			'validate_files'       => true,
-			'output_path'          => $output_path,
-			'abspath'              => ABSPATH,
-			'docket_cache_warmup'  => $settings['docket_cache_warmup'] ?? false,
-			'docket_cache_options' => [
-				'max_keys' => $settings['docket_cache_max_keys'] ?? 50,
-			],
+			'use_require'    => $settings['use_require'],
+			'validate_files' => true,
+			'output_path'    => $output_path,
+			'abspath'        => ABSPATH,
 		];
 
 		$result = $this->plugin->preload_generator->write_file($files_config, $output_path, $options);
@@ -535,14 +531,10 @@ class Ajax_Handler {
 		}
 
 		$options = [
-			'use_require'          => $settings['use_require'],
-			'validate_files'       => true,
-			'output_path'          => $settings['output_path'],
-			'abspath'              => ABSPATH,
-			'docket_cache_warmup'  => $settings['docket_cache_warmup'] ?? false,
-			'docket_cache_options' => [
-				'max_keys' => $settings['docket_cache_max_keys'] ?? 50,
-			],
+			'use_require'    => $settings['use_require'],
+			'validate_files' => true,
+			'output_path'    => $settings['output_path'],
+			'abspath'        => ABSPATH,
 		];
 
 		$content = $this->plugin->preload_generator->preview($files_config, $options);
