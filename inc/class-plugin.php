@@ -88,6 +88,13 @@ class Plugin {
 	public ?Dependency_Resolver $dependency_resolver = null;
 
 	/**
+	 * Docket Cache integration instance.
+	 *
+	 * @var Docket_Cache_Integration|null
+	 */
+	public ?Docket_Cache_Integration $docket_cache = null;
+
+	/**
 	 * Main instance.
 	 *
 	 * @return Plugin
@@ -139,6 +146,7 @@ class Plugin {
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-generator.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-tester.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-auto-optimizer.php';
+		require_once OPCACHE_PRELOAD_DIR . 'inc/class-docket-cache-integration.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-admin-page.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-ajax-handler.php';
 
@@ -160,6 +168,7 @@ class Plugin {
 		$this->preload_generator   = new Preload_Generator($this->safety_analyzer, $this->dependency_resolver);
 		$this->preload_tester      = new Preload_Tester();
 		$this->auto_optimizer      = new Auto_Optimizer($this, $this->preload_tester);
+		$this->docket_cache        = new Docket_Cache_Integration();
 
 		if (is_admin()) {
 			$this->admin_page   = new Admin_Page($this);
@@ -345,10 +354,24 @@ class Plugin {
 	public function get_settings(): array {
 
 		$defaults = [
-			'use_require'      => true,
-			'output_path'      => ABSPATH . 'preload.php',
-			'auto_suggest_top' => 50,
-			'exclude_patterns' => ['*/tests/*', '*/vendor/*test*', '*/phpunit/*'],
+			'use_require'           => true,
+			'output_path'           => ABSPATH . 'preload.php',
+			'auto_suggest_top'      => 50,
+			'exclude_patterns'      => [
+				// Test files.
+				'*/tests/*',
+				'*/vendor/*test*',
+				'*/phpunit/*',
+				// Cache directories - these change frequently and shouldn't be preloaded.
+				'*/cache/*',
+				'*/docket-cache/*',
+				'*/docket-cache-data/*',
+				'*/wp-content/cache/*',
+				// Object cache drop-in - handled separately via Docket Cache integration.
+				'*/object-cache.php',
+			],
+			'docket_cache_warmup'   => true,
+			'docket_cache_max_keys' => 50,
 		];
 
 		return wp_parse_args(get_option('opcache_preload_settings', []), $defaults);

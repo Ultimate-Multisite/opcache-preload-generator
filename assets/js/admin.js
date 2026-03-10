@@ -64,7 +64,6 @@
 		// Optimization state
 		optimizing: false,
 		optimizeState: null,
-		totalCandidates: 0,
 
 		analyzeSuggested: function() {
 			var self = this;
@@ -789,9 +788,8 @@
 					}
 
 					self.optimizeState = response.data.state;
-					self.totalCandidates = response.data.candidates_count;
 					self.updateOptimizeUI();
-					self.addLogEntry('Started optimization with ' + self.totalCandidates + ' candidate files');
+					self.addLogEntry('Started optimization with ' + response.data.candidates_count + ' candidate files');
 
 					// Run baseline test
 					self.runBaselineTest();
@@ -946,12 +944,11 @@
 						$('#optimize-progress').hide();
 						$('#optimize-log-entries').empty();
 						$('#optimize-log').hide();
-						$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
-						$('#opcache-stop-optimize').prop('disabled', true);
-						$('#opcache-reset-optimize').prop('disabled', true);
+					$('#opcache-start-optimize').prop('disabled', false).text('Start Optimization');
+					$('#opcache-stop-optimize').prop('disabled', true);
+					$('#opcache-reset-optimize').prop('disabled', true);
 
 						self.optimizeState = null;
-						self.totalCandidates = 0;
 					}
 				}
 			});
@@ -987,8 +984,9 @@
 			$('#optimize-files-added').text(state.files_added + ' ' + opcachePreload.i18n.added);
 			$('#optimize-files-failed').text(state.files_failed + ' ' + opcachePreload.i18n.failed);
 
-			// Update progress bar
-			var progress = this.totalCandidates > 0 ? (state.files_tested / this.totalCandidates) * 100 : 0;
+			// Update progress bar (use total_candidates from state for persistence across page refreshes)
+			var totalCandidates = state.total_candidates || 0;
+			var progress = totalCandidates > 0 ? (state.files_tested / totalCandidates) * 100 : 0;
 			$('#optimize-progress-bar').css('width', progress + '%');
 
 			// Update current file

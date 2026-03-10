@@ -82,7 +82,6 @@ $result = [
 	'success' => false,
 	'time_ms' => 0,
 	'memory_peak' => 0,
-	'preload_included' => false,
 	'output_valid' => false,
 	'error' => null,
 	'code' => null
@@ -93,12 +92,12 @@ try {
 	$start_time = hrtime(true);
 	$start_memory = memory_get_usage(true);
 
-	// Include preload file if it exists.
-	$preload_path = '__PRELOAD_PATH__';
-	if (file_exists($preload_path)) {
-		include_once $preload_path;
-		$result['preload_included'] = true;
-	}
+	// Note: We do NOT include the preload file here.
+	// OPcache preloading works at the PHP-FPM level, not at runtime.
+	// This test measures WordPress load time. When preloading is properly
+	// configured in php.ini, the preloaded files will already be in OPcache,
+	// making WordPress load faster. We measure that improvement by comparing
+	// load times before and after adding files to the preload configuration.
 
 	// Define ABSPATH if not already defined.
 	if (!defined('ABSPATH')) {
@@ -108,14 +107,39 @@ try {
 	// Start output buffering.
 	ob_start();
 
-	// Suppress errors to capture them.
-	$old_error_reporting = error_reporting(E_ALL);
-	set_error_handler(function($errno, $errstr, $errfile, $errline) use (&$result) {
-		// Only capture fatal-ish errors.
-		if ($errno & (E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR)) {
-			$result['error'] = $errstr;
-			$result['code'] = 'php_error';
+	// Register shutdown function to catch fatal errors.
+	// Fatal errors (E_ERROR, E_PARSE, etc.) cannot be caught by set_error_handler().
+	register_shutdown_function(function() use (&$result) {
+		$error = error_get_last();
+		if ($error !== null && ($error['type'] & (E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR))) {
+			// Clean up output buffer.
+			while (ob_get_level() > 0) {
+				ob_end_clean();
+			}
+			header('Content-Type: application/json');
+			echo json_encode([
+				'success' => false,
+				'error' => $error['message'],
+				'code' => 'fatal_error',
+				'file' => $error['file'],
+				'line' => $error['line'],
+				'time_ms' => 0,
+				'memory_peak' => memory_get_peak_usage(true),
+				'output_valid' => false
+			], JSON_PRETTY_PRINT);
 		}
+	});
+
+	// Capture all errors (warnings, notices, etc.).
+	$old_error_reporting = error_reporting(E_ALL);
+	$captured_errors = [];
+	set_error_handler(function($errno, $errstr, $errfile, $errline) use (&$captured_errors) {
+		$captured_errors[] = [
+			'type' => $errno,
+			'message' => $errstr,
+			'file' => $errfile,
+			'line' => $errline
+		];
 		return false; // Let normal error handler continue.
 	});
 
@@ -172,8 +196,14 @@ try {
 
 	$output_valid = $has_html && $has_body && $has_head && $output_length >= $min_length;
 
+	// Check for significant errors (warnings and above, excluding notices/deprecations).
+	$significant_errors = array_filter($captured_errors, function($err) {
+		return $err['type'] & (E_WARNING | E_USER_WARNING | E_USER_ERROR | E_RECOVERABLE_ERROR);
+	});
+
 	// Build result.
-	$result['success'] = $output_valid && empty($result['error']);
+	$has_errors = !empty($significant_errors);
+	$result['success'] = $output_valid && !$has_errors;
 	$result['time_ms'] = round($duration_ms, 2);
 	$result['memory_peak'] = memory_get_peak_usage(true);
 	$result['output_valid'] = $output_valid;
@@ -185,7 +215,18 @@ try {
 		'min_length' => $output_length >= $min_length
 	];
 
-	if (!$output_valid && empty($result['error'])) {
+	// Include captured errors in result.
+	if (!empty($captured_errors)) {
+		$result['php_errors'] = $captured_errors;
+	}
+
+	if ($has_errors) {
+		$first_error = reset($significant_errors);
+		$result['error'] = $first_error['message'];
+		$result['code'] = 'php_error';
+		$result['file'] = $first_error['file'];
+		$result['line'] = $first_error['line'];
+	} elseif (!$output_valid) {
 		$result['error'] = 'Output does not appear to be a valid homepage';
 		$result['code'] = 'invalid_output';
 	}
@@ -301,7 +342,13 @@ PHP;
 		}
 
 		$body = wp_remote_retrieve_body($response);
-		$data = json_decode($body, true);
+
+		// Extract JSON from response body.
+		// WordPress plugins (like Docket Cache) may add HTML comments after our JSON output.
+		// Find the JSON object boundaries and extract just the JSON.
+		$json_body = $this->extract_json_from_response($body);
+
+		$data = json_decode($json_body, true);
 
 		if (null === $data) {
 			return [
@@ -313,5 +360,43 @@ PHP;
 		}
 
 		return $data;
+	}
+
+	/**
+	 * Extract JSON object from response body.
+	 *
+	 * WordPress plugins may add HTML comments or other content after our JSON output.
+	 * This method finds and extracts just the JSON object.
+	 *
+	 * @param string $body Response body.
+	 * @return string Extracted JSON string.
+	 */
+	private function extract_json_from_response(string $body): string {
+
+		// Trim whitespace.
+		$body = trim($body);
+
+		// If it starts with {, find the matching closing brace.
+		if ('{' === substr($body, 0, 1)) {
+			$depth = 0;
+			$len   = strlen($body);
+
+			for ($i = 0; $i < $len; $i++) {
+				$char = $body[ $i ];
+
+				if ('{' === $char) {
+					++$depth;
+				} elseif ('}' === $char) {
+					--$depth;
+
+					if (0 === $depth) {
+						return substr($body, 0, $i + 1);
+					}
+				}
+			}
+		}
+
+		// Return original body if we can't extract JSON.
+		return $body;
 	}
 }

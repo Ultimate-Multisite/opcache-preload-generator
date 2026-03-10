@@ -403,10 +403,14 @@ class Ajax_Handler {
 		// Generate file with safety options.
 		$output_path = $settings['output_path'];
 		$options     = [
-			'use_require'    => $settings['use_require'],
-			'validate_files' => true,
-			'output_path'    => $output_path,
-			'abspath'        => ABSPATH,
+			'use_require'          => $settings['use_require'],
+			'validate_files'       => true,
+			'output_path'          => $output_path,
+			'abspath'              => ABSPATH,
+			'docket_cache_warmup'  => $settings['docket_cache_warmup'] ?? false,
+			'docket_cache_options' => [
+				'max_keys' => $settings['docket_cache_max_keys'] ?? 50,
+			],
 		];
 
 		$result = $this->plugin->preload_generator->write_file($files_config, $output_path, $options);
@@ -660,6 +664,13 @@ class Ajax_Handler {
 
 		// Clean up test file.
 		$this->plugin->preload_tester->delete_test_file();
+
+		// Clean up token file.
+		$token_file = ABSPATH . '.opcache_test_token';
+		if (file_exists($token_file)) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			unlink($token_file);
+		}
 
 		// Reset state.
 		$this->plugin->auto_optimizer->reset_state();

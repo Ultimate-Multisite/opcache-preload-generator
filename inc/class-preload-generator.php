@@ -66,6 +66,8 @@ class Preload_Generator {
 			'output_path'          => '',
 			'abspath'              => ABSPATH,
 			'resolve_dependencies' => true,
+			'docket_cache_warmup'  => false,
+			'docket_cache_options' => [],
 		];
 
 		$options = wp_parse_args($options, $defaults);
@@ -83,6 +85,11 @@ class Preload_Generator {
 
 		$content .= $this->generate_safety_checks($options);
 		$content .= $this->generate_file_includes($files, $options);
+
+		// Add Docket Cache warmup if enabled.
+		if ($options['docket_cache_warmup']) {
+			$content .= $this->generate_docket_cache_warmup($options);
+		}
 
 		return $content;
 	}
@@ -334,6 +341,109 @@ PHP;
 		}
 
 		return $content;
+	}
+
+	/**
+	 * Generate Docket Cache warmup code.
+	 *
+	 * This initializes the object cache and preloads frequently accessed keys.
+	 *
+	 * @param array<string, mixed> $options Generation options.
+	 * @return string
+	 */
+	private function generate_docket_cache_warmup(array $options): string {
+
+		$abspath = addslashes($options['abspath'] ?? ABSPATH);
+
+		// Get essential cache keys to preload.
+		$essential_keys = [
+			// Global options that are loaded on every request.
+			'options'      => [
+				'siteurl',
+				'home',
+				'blogname',
+				'blogdescription',
+				'admin_email',
+				'date_format',
+				'time_format',
+				'permalink_structure',
+				'active_plugins',
+				'template',
+				'stylesheet',
+				'blog_charset',
+				'db_version',
+				'show_on_front',
+				'page_on_front',
+				'page_for_posts',
+				'timezone_string',
+				'gmt_offset',
+				'WPLANG',
+				'rewrite_rules',
+			],
+			// Site meta for multisite.
+			'site-options' => [
+				'site_name',
+				'admin_email',
+				'siteurl',
+				'active_sitewide_plugins',
+				'WPLANG',
+			],
+		];
+
+		// Limit keys if max_keys option is set.
+		$docket_options = $options['docket_cache_options'] ?? [];
+		$max_keys       = $docket_options['max_keys'] ?? 50;
+
+		if ($max_keys > 0) {
+			foreach ($essential_keys as $group => $keys) {
+				$essential_keys[ $group ] = array_slice($keys, 0, $max_keys);
+			}
+		}
+
+		// Export keys as PHP array.
+		$keys_export = var_export($essential_keys, true);
+
+		return <<<PHP
+
+// Docket Cache Warmup
+// Initialize the object cache and preload frequently accessed keys.
+// This runs during OPcache preloading to warm the cache.
+\$object_cache_file = '{$abspath}wp-content/object-cache.php';
+if (file_exists(\$object_cache_file)) {
+	// Check if it's Docket Cache.
+	\$is_docket = false;
+	\$content = file_get_contents(\$object_cache_file, false, null, 0, 500);
+	if (strpos(\$content, 'Docket Cache') !== false) {
+		\$is_docket = true;
+	}
+	
+	if (\$is_docket) {
+		// Load WordPress core functions needed for object cache.
+		\$cache_file = '{$abspath}wp-includes/cache.php';
+		if (file_exists(\$cache_file) && !function_exists('wp_cache_init')) {
+			require_once \$cache_file;
+		}
+		
+		// Initialize the object cache.
+		require_once \$object_cache_file;
+		
+		if (function_exists('wp_cache_init')) {
+			wp_cache_init();
+			
+			// Preload essential cache keys.
+			// These are the most commonly accessed keys across all sites.
+			\$essential_keys = {$keys_export};
+			
+			foreach (\$essential_keys as \$group => \$keys) {
+				foreach (\$keys as \$key) {
+					wp_cache_get(\$key, \$group);
+				}
+			}
+		}
+	}
+}
+
+PHP;
 	}
 
 	/**

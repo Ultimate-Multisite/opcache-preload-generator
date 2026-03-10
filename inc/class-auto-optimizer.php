@@ -60,24 +60,25 @@ class Auto_Optimizer {
 	public function get_state(): array {
 
 		$default = [
-			'status'          => 'idle', // idle, running, paused, completed, error.
-			'phase'           => '', // baseline, optimizing, complete.
-			'test_token'      => '',
-			'baseline_time'   => 0,
-			'current_time'    => 0,
-			'best_time'       => 0,
-			'files_tested'    => 0,
-			'files_added'     => 0,
-			'files_failed'    => 0,
-			'failed_files'    => [],
-			'candidate_files' => [],
-			'current_file'    => '',
-			'time_saved_ms'   => 0,
-			'time_saved_pct'  => 0,
-			'last_error'      => '',
-			'started_at'      => 0,
-			'updated_at'      => 0,
-			'test_results'    => [],
+			'status'           => 'idle', // idle, running, paused, completed, error.
+			'phase'            => '', // baseline, optimizing, complete.
+			'test_token'       => '',
+			'baseline_time'    => 0,
+			'current_time'     => 0,
+			'best_time'        => 0,
+			'files_tested'     => 0,
+			'files_added'      => 0,
+			'files_failed'     => 0,
+			'failed_files'     => [],
+			'candidate_files'  => [],
+			'total_candidates' => 0, // Total candidates at start (for progress calculation).
+			'current_file'     => '',
+			'time_saved_ms'    => 0,
+			'time_saved_pct'   => 0,
+			'last_error'       => '',
+			'started_at'       => 0,
+			'updated_at'       => 0,
+			'test_results'     => [],
 		];
 
 		$state = get_option(self::STATE_OPTION, $default);
@@ -143,38 +144,48 @@ class Auto_Optimizer {
 		// Clear existing preload files for baseline test.
 		$existing_files = $this->plugin->get_preload_files();
 
+		// Store total candidates count for progress calculation.
+		$total_candidates = count($candidates);
+
 		// Initialize state.
 		$state = [
-			'status'          => 'running',
-			'phase'           => 'baseline',
-			'test_token'      => $token,
-			'baseline_time'   => 0,
-			'current_time'    => 0,
-			'best_time'       => 0,
-			'files_tested'    => 0,
-			'files_added'     => 0,
-			'files_failed'    => 0,
-			'failed_files'    => [],
-			'candidate_files' => $candidates,
-			'current_file'    => '',
-			'time_saved_ms'   => 0,
-			'time_saved_pct'  => 0,
-			'last_error'      => '',
-			'started_at'      => time(),
-			'updated_at'      => time(),
-			'test_results'    => [],
-			'original_files'  => $existing_files,
+			'status'           => 'running',
+			'phase'            => 'baseline',
+			'test_token'       => $token,
+			'baseline_time'    => 0,
+			'current_time'     => 0,
+			'best_time'        => 0,
+			'files_tested'     => 0,
+			'files_added'      => 0,
+			'files_failed'     => 0,
+			'failed_files'     => [],
+			'candidate_files'  => $candidates,
+			'total_candidates' => $total_candidates,
+			'current_file'     => '',
+			'time_saved_ms'    => 0,
+			'time_saved_pct'   => 0,
+			'last_error'       => '',
+			'started_at'       => time(),
+			'updated_at'       => time(),
+			'test_results'     => [],
+			'original_files'   => $existing_files,
 		];
 
 		$this->save_state($state);
 
-		// Set environment variable for token (store in transient for test file to read).
+		// Create the token file for the test script to read.
+		// This is created once at start and persists until optimization ends.
+		$token_file = ABSPATH . '.opcache_test_token';
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		file_put_contents($token_file, $token);
+
+		// Also store in transient as backup.
 		set_transient('opcache_test_token', $token, HOUR_IN_SECONDS);
 
 		return [
 			'success'          => true,
 			'state'            => $state,
-			'candidates_count' => count($candidates),
+			'candidates_count' => $total_candidates,
 		];
 	}
 
@@ -413,10 +424,9 @@ class Auto_Optimizer {
 
 		$this->save_state($state);
 
-		// Clean up test file.
+		// Clean up test file and token.
 		$this->tester->delete_test_file();
-
-		// Clean up token transient.
+		$this->cleanup_token_file();
 		delete_transient('opcache_test_token');
 
 		return [
@@ -445,8 +455,9 @@ class Auto_Optimizer {
 
 		$this->save_state($state);
 
-		// Clean up test file.
+		// Clean up test file and token.
 		$this->tester->delete_test_file();
+		$this->cleanup_token_file();
 		delete_transient('opcache_test_token');
 
 		return [
@@ -520,28 +531,30 @@ class Auto_Optimizer {
 	/**
 	 * Run test with the stored token.
 	 *
+	 * The token file is created once at the start of optimization (in start())
+	 * and persists until optimization completes or stops. This avoids race
+	 * conditions where the HTTP request hasn't read the token yet.
+	 *
 	 * @param string $token Test token.
 	 * @return array
 	 */
 	private function run_test_with_token(string $token): array {
 
-		// We need to set the token in the environment for the test file.
-		// Since we can't easily set PHP-FPM env vars, we'll use a different approach.
-		// Store token in a file that the test script can read.
+		return $this->tester->run_test($token);
+	}
+
+	/**
+	 * Clean up the token file.
+	 *
+	 * @return void
+	 */
+	private function cleanup_token_file(): void {
+
 		$token_file = ABSPATH . '.opcache_test_token';
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		file_put_contents($token_file, $token);
-
-		// Update test file to read from file instead of env.
-		$result = $this->tester->run_test($token);
-
-		// Clean up token file.
 		if (file_exists($token_file)) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
 			unlink($token_file);
 		}
-
-		return $result;
 	}
 }

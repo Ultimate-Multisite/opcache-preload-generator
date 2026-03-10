@@ -39,7 +39,9 @@
             "composer/installers": true,
             "dealerdirect/phpcodesniffer-composer-installer": true,
             "phpstan/extension-installer": true
-        }
+        },
+        "optimize-autoloader": true,
+        "classmap-authoritative": true
     },
     "archive": {
         "exclude": [
