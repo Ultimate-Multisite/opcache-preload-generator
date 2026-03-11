@@ -92,15 +92,11 @@ try {
 	$start_time = hrtime(true);
 	$start_memory = memory_get_usage(true);
 
-	// Include preload file if it exists.
-	// This tests that the preload file can be safely included without errors.
-	// If any file in the preload causes a fatal error, we'll catch it and
-	// report the file as failed.
-	$preload_path = '__PRELOAD_PATH__';
-	if (file_exists($preload_path)) {
-		include_once $preload_path;
-		$result['preload_included'] = true;
-	}
+	// Note: We do NOT include the preload file here.
+	// The preload file is designed to be loaded by PHP-FPM at startup, not at runtime.
+	// Including it during a request would cause conflicts (e.g., constants already defined).
+	// Instead, we rely on the safety analyzer to filter out unsafe files, and this test
+	// measures WordPress load time to verify the site still works after adding files.
 
 	// Define ABSPATH if not already defined.
 	if (!defined('ABSPATH')) {

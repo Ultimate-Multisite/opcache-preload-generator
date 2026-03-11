@@ -23,19 +23,25 @@ class File_Safety_Analyzer {
 	 * @var array<string>
 	 */
 	private array $blacklisted_files = [
-		'general-template.php',
-		'link-template.php',
-		'l10n.php',
-		'class-simplepie.php',
-		'class-snoopy.php',
-		'class-json.php',
+		// Core bootstrap files that define constants or have side effects.
+		'wp-settings.php',
+		'wp-config.php',
+		'wp-load.php',
 		'version.php',
 		'load.php',
 		'default-constants.php',
+		// Files with complex dependencies or global state.
+		'general-template.php',
+		'link-template.php',
+		'l10n.php',
 		'plugin.php',
 		'option.php',
 		'wp-db.php',
 		'class-wp-locale.php',
+		// Legacy/deprecated classes.
+		'class-simplepie.php',
+		'class-snoopy.php',
+		'class-json.php',
 	];
 
 	/**
@@ -196,7 +202,50 @@ class File_Safety_Analyzer {
 	 */
 	private function check_define_calls(string $content, array &$result): void {
 
-		// Check for define calls outside functions.
+		// List of WordPress core constants that should not be defined by preloaded files.
+		// These are defined by WordPress during bootstrap and will conflict.
+		$core_constants = [
+			'ABSPATH',
+			'WPINC',
+			'WP_CONTENT_DIR',
+			'WP_CONTENT_URL',
+			'WP_PLUGIN_DIR',
+			'WP_PLUGIN_URL',
+			'PLUGINDIR',
+			'WP_LANG_DIR',
+			'LANGDIR',
+			'WP_DEBUG',
+			'WP_DEBUG_LOG',
+			'WP_DEBUG_DISPLAY',
+			'SCRIPT_DEBUG',
+			'SAVEQUERIES',
+			'WP_CACHE',
+			'MULTISITE',
+			'SUBDOMAIN_INSTALL',
+			'DOMAIN_CURRENT_SITE',
+			'PATH_CURRENT_SITE',
+			'SITE_ID_CURRENT_SITE',
+			'BLOG_ID_CURRENT_SITE',
+		];
+
+		// Check for define calls that define core constants.
+		foreach ($core_constants as $const) {
+			// Match define('CONST_NAME', ...) - with or without defined() check.
+			// Even with a defined() check, these files are risky because the preload
+			// runs before WordPress, so the constant WILL be defined by preload.
+			if (preg_match('/define\s*\(\s*[\'"]' . preg_quote($const, '/') . '[\'"]\s*,/i', $content)) {
+				$result['safe']     = false;
+				$result['errors'][] = sprintf(
+					/* translators: %s: constant name */
+					__('File defines WordPress core constant %s, which will conflict with WordPress bootstrap.', 'opcache-preload-generator'),
+					$const
+				);
+
+				return;
+			}
+		}
+
+		// Check for other define calls outside functions.
 		if (preg_match('/^\s*define\s*\(/m', $content)) {
 			// Check if it's wrapped in if(!defined()).
 			if (! preg_match('/if\s*\(\s*!\s*defined\s*\(/', $content)) {
