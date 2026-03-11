@@ -187,16 +187,58 @@ class File_Safety_Analyzer {
 			}
 		}
 
-		// Check for exit/die at top level.
-		// The common WordPress pattern "if (!defined('ABSPATH')) { exit; }" is problematic
-		// because during preload, ABSPATH may not be defined yet, causing the file to exit.
-		// While our preload header defines ABSPATH, this pattern indicates the file expects
-		// WordPress to be loaded, which it won't be during preload.
-		if (preg_match('/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\)\s*\{?\s*(exit|die)/i', $content)) {
+		// Check for exit/die at top level (outside the ABSPATH check pattern which is OK).
+		if (preg_match('/^\s*(exit|die)\s*[;(]/m', $content)) {
+			// Ignore if it's just the standard ABSPATH check pattern.
+			if (! preg_match('/defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\|\|\s*(exit|die)/i', $content) &&
+				! preg_match('/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\)\s*\{?\s*(exit|die)/i', $content)) {
+				$result['warnings'][] = __('File contains exit/die statements that may execute during preload.', 'opcache-preload-generator');
+			}
+		}
+
+		// Check for top-level require/include statements (outside functions/classes).
+		// These execute immediately and may have side effects or load files that aren't preload-safe.
+		// We look for require/include at the start of a line (not indented), excluding autoloader patterns.
+		if (preg_match('/^(require|require_once|include|include_once)\s+/m', $content)) {
+			// Check if this looks like a main plugin file with multiple requires.
+			$require_count = preg_match_all('/^(require|require_once|include|include_once)\s+/m', $content);
+			if ($require_count > 1) {
+				$result['safe']     = false;
+				$result['errors'][] = __('File contains multiple top-level require/include statements. This indicates a bootstrap file with side effects.', 'opcache-preload-generator');
+
+				return;
+			}
+		}
+
+		// Check for $GLOBALS assignments at top level - these are side effects.
+		if (preg_match('/^\$GLOBALS\s*\[/m', $content)) {
 			$result['safe']     = false;
-			$result['errors'][] = __('File has ABSPATH check with exit/die. This pattern is incompatible with preloading.', 'opcache-preload-generator');
-		} elseif (preg_match('/^\s*(exit|die)\s*[;(]/m', $content)) {
-			$result['warnings'][] = __('File contains exit/die statements that may execute during preload.', 'opcache-preload-generator');
+			$result['errors'][] = __('File assigns to $GLOBALS at top level. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
+
+			return;
+		}
+
+		// Check for top-level function calls (not inside class/function).
+		// Look for patterns like: SomeClass::method(); or function_name();
+		// Exclude common safe patterns like define(), class_alias(), etc.
+		$safe_functions = 'define|class_alias|interface_exists|class_exists|function_exists|defined|trait_exists|spl_autoload_register';
+		if (preg_match('/^(?!' . $safe_functions . ')[a-zA-Z_\\\\]+::[a-zA-Z_]+\s*\(/m', $content)) {
+			$result['safe']     = false;
+			$result['errors'][] = __('File contains top-level static method calls. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
+
+			return;
+		}
+
+		// Check for top-level object instantiation with assignment to globals.
+		if (preg_match('/^\$[a-zA-Z_]+\s*=\s*new\s+/m', $content)) {
+			// This could be inside a function, so check more carefully.
+			// If it's at column 0 (no indentation), it's likely top-level.
+			if (preg_match('/^(\$[a-zA-Z_]+)\s*=\s*new\s+/m', $content, $matches)) {
+				$result['safe']     = false;
+				$result['errors'][] = __('File contains top-level object instantiation. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
+
+				return;
+			}
 		}
 	}
 
