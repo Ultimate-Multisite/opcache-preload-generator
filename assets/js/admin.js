@@ -873,9 +873,9 @@
 
 					// Log result
 					if (response.data.file_status === 'added') {
-						self.addLogEntry('<code>' + self.getBasename(response.data.file) + '</code> → ' + response.data.time_ms + ' ms', 'success');
+						self.addLogEntry('<code>' + self.getShortPath(response.data.file) + '</code> → ' + response.data.time_ms + ' ms', 'success');
 					} else if (response.data.file_status === 'failed') {
-						self.addLogEntry('<code>' + self.getBasename(response.data.file) + '</code> failed: ' + response.data.error, 'error');
+						self.addLogEntry('<code>' + self.getShortPath(response.data.file) + '</code> failed: ' + response.data.error, 'error');
 					}
 
 					// Continue with next file
@@ -1037,6 +1037,15 @@
 
 		getBasename: function(path) {
 			return path.split('/').pop();
+		},
+
+		getShortPath: function(path) {
+			// Return last 2 path components (parent/filename) for better identification
+			var parts = path.split('/');
+			if (parts.length >= 2) {
+				return parts.slice(-2).join('/');
+			}
+			return parts.pop();
 		},
 
 		formatBytes: function(bytes) {
