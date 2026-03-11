@@ -188,7 +188,14 @@ class File_Safety_Analyzer {
 		}
 
 		// Check for exit/die at top level.
-		if (preg_match('/^\s*(exit|die)\s*[;(]/m', $content)) {
+		// The common WordPress pattern "if (!defined('ABSPATH')) { exit; }" is problematic
+		// because during preload, ABSPATH may not be defined yet, causing the file to exit.
+		// While our preload header defines ABSPATH, this pattern indicates the file expects
+		// WordPress to be loaded, which it won't be during preload.
+		if (preg_match('/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\)\s*\{?\s*(exit|die)/i', $content)) {
+			$result['safe']     = false;
+			$result['errors'][] = __('File has ABSPATH check with exit/die. This pattern is incompatible with preloading.', 'opcache-preload-generator');
+		} elseif (preg_match('/^\s*(exit|die)\s*[;(]/m', $content)) {
 			$result['warnings'][] = __('File contains exit/die statements that may execute during preload.', 'opcache-preload-generator');
 		}
 	}
