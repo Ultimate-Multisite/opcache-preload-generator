@@ -92,12 +92,15 @@ try {
 	$start_time = hrtime(true);
 	$start_memory = memory_get_usage(true);
 
-	// Note: We do NOT include the preload file here.
-	// OPcache preloading works at the PHP-FPM level, not at runtime.
-	// This test measures WordPress load time. When preloading is properly
-	// configured in php.ini, the preloaded files will already be in OPcache,
-	// making WordPress load faster. We measure that improvement by comparing
-	// load times before and after adding files to the preload configuration.
+	// Include preload file if it exists.
+	// This tests that the preload file can be safely included without errors.
+	// If any file in the preload causes a fatal error, we'll catch it and
+	// report the file as failed.
+	$preload_path = '__PRELOAD_PATH__';
+	if (file_exists($preload_path)) {
+		include_once $preload_path;
+		$result['preload_included'] = true;
+	}
 
 	// Define ABSPATH if not already defined.
 	if (!defined('ABSPATH')) {
