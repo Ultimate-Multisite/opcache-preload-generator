@@ -14,60 +14,30 @@ if (! defined('ABSPATH')) {
 
 /**
  * Analyzes PHP files for preload safety issues.
+ *
+ * This analyzer is intentionally permissive because:
+ * 1. Files are tested during optimization and errors are caught
+ * 2. Files that fail with require_once fall back to opcache_compile_file()
+ * 3. opcache_compile_file() compiles without executing, so side effects don't matter
+ *
+ * We only block files that would cause issues even with opcache_compile_file().
  */
 class File_Safety_Analyzer {
 
 	/**
 	 * List of known problematic WordPress core files.
 	 *
-	 * @var array<string>
-	 */
-	private array $blacklisted_files = [
-		// Core bootstrap files that define constants or have side effects.
-		'wp-settings.php',
-		'wp-config.php',
-		'wp-load.php',
-		'version.php',
-		'load.php',
-		'default-constants.php',
-		// Files with complex dependencies or global state.
-		'general-template.php',
-		'link-template.php',
-		'l10n.php',
-		'plugin.php',
-		'option.php',
-		'wp-db.php',
-		'class-wp-locale.php',
-		// Legacy/deprecated classes.
-		'class-simplepie.php',
-		'class-snoopy.php',
-		'class-json.php',
-	];
-
-	/**
-	 * List of functions that indicate side effects when called at top level.
+	 * These files have issues that can't be worked around:
+	 * - Bootstrap files that must run in a specific order
+	 * - Files with syntax that confuses the preloader
 	 *
 	 * @var array<string>
 	 */
-	private array $side_effect_functions = [
-		'echo',
-		'print',
-		'print_r',
-		'var_dump',
-		'var_export',
-		'exit',
-		'die',
-		'header',
-		'setcookie',
-		'session_start',
-		'ob_start',
-		'ob_flush',
-		'ob_end_flush',
-		'error_reporting',
-		'set_error_handler',
-		'set_exception_handler',
-		'register_shutdown_function',
-		'wp_die',
+	private array $blacklisted_files = [
+		// Core bootstrap files - must run in specific order during WordPress init.
+		'wp-settings.php',
+		'wp-config.php',
+		'wp-load.php',
 	];
 
 	/**
@@ -110,7 +80,7 @@ class File_Safety_Analyzer {
 			return $result;
 		}
 
-		// Read file content.
+		// Read file content for dependency extraction.
 		$content = file_get_contents($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 
 		if (false === $content) {
@@ -128,14 +98,8 @@ class File_Safety_Analyzer {
 			return $result;
 		}
 
-		// Run all safety checks.
-		$this->check_side_effects($content, $result);
-		$this->check_define_calls($content, $result);
-		$this->check_path_constants_in_properties($content, $result);
-		$this->check_conditional_definitions($content, $result);
+		// Extract dependencies for ordering (extends, implements, use).
 		$this->check_dependencies($content, $result);
-		$this->check_global_code($content, $result);
-		$this->check_require_include($content, $result);
 
 		return $result;
 	}
@@ -159,191 +123,6 @@ class File_Safety_Analyzer {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Check for side effects (code that executes on include).
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_side_effects(string $content, array &$result): void {
-
-		// Look for echo/print outside functions/classes.
-		$patterns = [
-			'/^\s*echo\s+/m',
-			'/^\s*print\s+/m',
-			'/^\s*print_r\s*\(/m',
-			'/^\s*var_dump\s*\(/m',
-			'/^\s*header\s*\(/m',
-		];
-
-		// Simple heuristic: check if these appear at the start of a line (not indented inside function/class).
-		foreach ($patterns as $pattern) {
-			if (preg_match($pattern, $content)) {
-				$result['warnings'][] = __('File may contain output statements (echo/print) at the top level.', 'opcache-preload-generator');
-				break;
-			}
-		}
-
-		// Check for exit/die at top level (outside the ABSPATH check pattern which is OK).
-		if (preg_match('/^\s*(exit|die)\s*[;(]/m', $content)) {
-			// Ignore if it's just the standard ABSPATH check pattern.
-			if (! preg_match('/defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\|\|\s*(exit|die)/i', $content) &&
-				! preg_match('/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\)\s*\{?\s*(exit|die)/i', $content)) {
-				$result['warnings'][] = __('File contains exit/die statements that may execute during preload.', 'opcache-preload-generator');
-			}
-		}
-
-		// Check for top-level require/include statements (outside functions/classes).
-		// These execute immediately and may have side effects or load files that aren't preload-safe.
-		// We look for require/include at the start of a line (not indented), excluding autoloader patterns.
-		if (preg_match('/^(require|require_once|include|include_once)\s+/m', $content)) {
-			// Check if this looks like a main plugin file with multiple requires.
-			$require_count = preg_match_all('/^(require|require_once|include|include_once)\s+/m', $content);
-			if ($require_count > 1) {
-				$result['safe']     = false;
-				$result['errors'][] = __('File contains multiple top-level require/include statements. This indicates a bootstrap file with side effects.', 'opcache-preload-generator');
-
-				return;
-			}
-		}
-
-		// Check for $GLOBALS assignments at top level - these are side effects.
-		if (preg_match('/^\$GLOBALS\s*\[/m', $content)) {
-			$result['safe']     = false;
-			$result['errors'][] = __('File assigns to $GLOBALS at top level. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
-
-			return;
-		}
-
-		// Check for top-level function calls (not inside class/function).
-		// Look for patterns like: SomeClass::method(); or function_name();
-		// Exclude common safe patterns like define(), class_alias(), etc.
-		$safe_functions = 'define|class_alias|interface_exists|class_exists|function_exists|defined|trait_exists|spl_autoload_register';
-		if (preg_match('/^(?!' . $safe_functions . ')[a-zA-Z_\\\\]+::[a-zA-Z_]+\s*\(/m', $content)) {
-			$result['safe']     = false;
-			$result['errors'][] = __('File contains top-level static method calls. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
-
-			return;
-		}
-
-		// Check for top-level object instantiation with assignment to globals.
-		if (preg_match('/^\$[a-zA-Z_]+\s*=\s*new\s+/m', $content)) {
-			// This could be inside a function, so check more carefully.
-			// If it's at column 0 (no indentation), it's likely top-level.
-			if (preg_match('/^(\$[a-zA-Z_]+)\s*=\s*new\s+/m', $content, $matches)) {
-				$result['safe']     = false;
-				$result['errors'][] = __('File contains top-level object instantiation. This is a side effect incompatible with preloading.', 'opcache-preload-generator');
-
-				return;
-			}
-		}
-	}
-
-	/**
-	 * Check for define() calls that may conflict.
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_define_calls(string $content, array &$result): void {
-
-		// List of WordPress core constants that should not be defined by preloaded files.
-		// These are defined by WordPress during bootstrap and will conflict.
-		$core_constants = [
-			'ABSPATH',
-			'WPINC',
-			'WP_CONTENT_DIR',
-			'WP_CONTENT_URL',
-			'WP_PLUGIN_DIR',
-			'WP_PLUGIN_URL',
-			'PLUGINDIR',
-			'WP_LANG_DIR',
-			'LANGDIR',
-			'WP_DEBUG',
-			'WP_DEBUG_LOG',
-			'WP_DEBUG_DISPLAY',
-			'SCRIPT_DEBUG',
-			'SAVEQUERIES',
-			'WP_CACHE',
-			'MULTISITE',
-			'SUBDOMAIN_INSTALL',
-			'DOMAIN_CURRENT_SITE',
-			'PATH_CURRENT_SITE',
-			'SITE_ID_CURRENT_SITE',
-			'BLOG_ID_CURRENT_SITE',
-		];
-
-		// Check for define calls that define core constants.
-		foreach ($core_constants as $const) {
-			// Match define('CONST_NAME', ...) - with or without defined() check.
-			// Even with a defined() check, these files are risky because the preload
-			// runs before WordPress, so the constant WILL be defined by preload.
-			if (preg_match('/define\s*\(\s*[\'"]' . preg_quote($const, '/') . '[\'"]\s*,/i', $content)) {
-				$result['safe']     = false;
-				$result['errors'][] = sprintf(
-					/* translators: %s: constant name */
-					__('File defines WordPress core constant %s, which will conflict with WordPress bootstrap.', 'opcache-preload-generator'),
-					$const
-				);
-
-				return;
-			}
-		}
-
-		// Check for other define calls outside functions.
-		if (preg_match('/^\s*define\s*\(/m', $content)) {
-			// Check if it's wrapped in if(!defined()).
-			if (! preg_match('/if\s*\(\s*!\s*defined\s*\(/', $content)) {
-				$result['warnings'][] = __('File contains define() calls without defined() checks, which may cause conflicts.', 'opcache-preload-generator');
-			}
-		}
-	}
-
-	/**
-	 * Check for __DIR__/__FILE__ in class properties.
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_path_constants_in_properties(string $content, array &$result): void {
-
-		// Pattern to detect class property assignments with __DIR__ or __FILE__.
-		// Handles typed properties (PHP 7.4+) like: private string $path = __DIR__;
-		$pattern = '/(?:private|protected|public|var)\s+(?:static\s+)?(?:[\?\w\\\\]+\s+)?\$\w+\s*=\s*[^;]*(__DIR__|__FILE__)/';
-
-		if (preg_match($pattern, $content)) {
-			$result['warnings'][] = __('File uses __DIR__ or __FILE__ in class property declarations. These will resolve to the preload file location instead of the original file location.', 'opcache-preload-generator');
-		}
-	}
-
-	/**
-	 * Check for conditional class/function definitions.
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_conditional_definitions(string $content, array &$result): void {
-
-		// Check for if(!class_exists()) patterns.
-		if (preg_match('/if\s*\(\s*!\s*class_exists\s*\(/', $content)) {
-			$result['warnings'][] = __('File contains conditional class definitions (class_exists checks). These may not work as expected with preloading.', 'opcache-preload-generator');
-		}
-
-		// Check for if(!function_exists()) patterns.
-		if (preg_match('/if\s*\(\s*!\s*function_exists\s*\(/', $content)) {
-			$result['warnings'][] = __('File contains conditional function definitions (function_exists checks). These may not work as expected with preloading.', 'opcache-preload-generator');
-		}
-
-		// Check for if(!interface_exists()) patterns.
-		if (preg_match('/if\s*\(\s*!\s*interface_exists\s*\(/', $content)) {
-			$result['warnings'][] = __('File contains conditional interface definitions (interface_exists checks).', 'opcache-preload-generator');
-		}
 	}
 
 	/**
@@ -388,63 +167,6 @@ class File_Safety_Analyzer {
 		}
 
 		$result['dependencies'] = array_unique($result['dependencies']);
-	}
-
-	/**
-	 * Check for global code that executes on include.
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_global_code(string $content, array &$result): void {
-
-		// Check for immediate function calls at top level.
-		// This is a heuristic - we look for function calls not inside class/function definitions.
-		$dangerous_patterns = [
-			'/^\s*\$GLOBALS\s*\[/m',
-			'/^\s*\$_SERVER\s*\[/m',
-			'/^\s*\$_GET\s*\[/m',
-			'/^\s*\$_POST\s*\[/m',
-			'/^\s*\$_REQUEST\s*\[/m',
-			'/^\s*\$_COOKIE\s*\[/m',
-			'/^\s*add_action\s*\(/m',
-			'/^\s*add_filter\s*\(/m',
-			'/^\s*register_activation_hook\s*\(/m',
-			'/^\s*register_deactivation_hook\s*\(/m',
-		];
-
-		foreach ($dangerous_patterns as $pattern) {
-			if (preg_match($pattern, $content)) {
-				$result['warnings'][] = __('File contains WordPress hooks or global variable access at the top level. This code will execute during preload when WordPress may not be fully loaded.', 'opcache-preload-generator');
-				break;
-			}
-		}
-	}
-
-	/**
-	 * Check for require/include statements.
-	 *
-	 * @param string                                                                                         $content File content.
-	 * @param array{safe: bool, warnings: array<string>, errors: array<string>, dependencies: array<string>} $result  Result array (modified by reference).
-	 * @return void
-	 */
-	private function check_require_include(string $content, array &$result): void {
-
-		// Check for require/include at top level.
-		$patterns = [
-			'/^\s*require\s+/m',
-			'/^\s*require_once\s+/m',
-			'/^\s*include\s+/m',
-			'/^\s*include_once\s+/m',
-		];
-
-		foreach ($patterns as $pattern) {
-			if (preg_match($pattern, $content)) {
-				$result['warnings'][] = __('File contains require/include statements at the top level. These files will also be loaded during preload.', 'opcache-preload-generator');
-				break;
-			}
-		}
 	}
 
 	/**

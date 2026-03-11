@@ -789,7 +789,17 @@
 
 					self.optimizeState = response.data.state;
 					self.updateOptimizeUI();
-					self.addLogEntry('Started optimization with ' + response.data.candidates_count + ' candidate files');
+					
+					// Build log message based on mode
+					var logMsg = 'Started optimization with ' + response.data.candidates_count + ' candidate files';
+					if (response.data.auto_detected) {
+						logMsg += ' (auto: ' + response.data.auto_detected + ' detected';
+						if (response.data.reference_file) {
+							logMsg += ', ref: ' + response.data.reference_file + ' @ ' + response.data.reference_hits + ' hits';
+						}
+						logMsg += ', threshold: ' + response.data.cutoff_hits + ' hits)';
+					}
+					self.addLogEntry(logMsg);
 
 					// Run baseline test
 					self.runBaselineTest();
@@ -873,7 +883,7 @@
 
 					// Log result
 					if (response.data.file_status === 'added') {
-						self.addLogEntry('<code>' + self.getShortPath(response.data.file) + '</code> → ' + response.data.time_ms + ' ms', 'success');
+						self.addLogEntry('<code>' + self.getShortPath(response.data.file) + '</code> → ' + response.data.time_ms + ' ms → <code>' + (response.data.method ?? 'require_once') + '()</code>', 'success');
 					} else if (response.data.file_status === 'failed') {
 						self.addLogEntry('<code>' + self.getShortPath(response.data.file) + '</code> failed: ' + response.data.error, 'error');
 					}

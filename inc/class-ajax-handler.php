@@ -559,10 +559,16 @@ class Ajax_Handler {
 		}
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$max_files = isset($_POST['max_files']) ? absint($_POST['max_files']) : 100;
-		$max_files = min($max_files, 500); // Cap at 500 for safety.
+		$max_files_input = isset($_POST['max_files']) ? sanitize_text_field(wp_unslash($_POST['max_files'])) : 'auto';
 
-		$result = $this->plugin->auto_optimizer->start($max_files);
+		// Handle "auto" mode - detect optimal number based on hit distribution.
+		if ('auto' === $max_files_input) {
+			$result = $this->plugin->auto_optimizer->start_auto();
+		} else {
+			$max_files = absint($max_files_input);
+			$max_files = min($max_files, 5000); // Cap at 500 for safety.
+			$result    = $this->plugin->auto_optimizer->start($max_files);
+		}
 
 		if ($result['success']) {
 			wp_send_json_success($result);

@@ -280,12 +280,6 @@ if (!defined('ABSPATH')) {
 	define('ABSPATH', '{$abspath}');
 }
 
-// Also define common WordPress constants that may be checked.
-if (!defined('WPINC')) {
-	define('WPINC', 'wp-includes');
-}
-
-
 PHP;
 	}
 

@@ -115,7 +115,7 @@ class Auto_Optimizer {
 	 * @param int $max_files Maximum number of files to test.
 	 * @return array Result with state.
 	 */
-	public function start(int $max_files = 100): array {
+	public function start(int $max_files = 1000): array {
 
 		// Get safe candidate files from OPcache.
 		$candidates = $this->get_candidate_files($max_files);
@@ -186,6 +186,108 @@ class Auto_Optimizer {
 			'success'          => true,
 			'state'            => $state,
 			'candidates_count' => $total_candidates,
+		];
+	}
+
+	/**
+	 * Start the optimization process with automatic file count detection.
+	 *
+	 * Uses hit distribution analysis to find files that are used in almost
+	 * every request (high-hit files) rather than using a fixed number.
+	 *
+	 * @return array Result with state.
+	 */
+	public function start_auto(): array {
+
+		// Get high-hit scripts using automatic cutoff detection.
+		$high_hit_result = $this->plugin->opcache_analyzer->get_high_hit_scripts();
+
+		if (empty($high_hit_result['scripts'])) {
+			return [
+				'success' => false,
+				'error'   => __('No high-hit files found. Make sure OPcache has cached some files and they have been accessed multiple times.', 'opcache-preload-generator'),
+			];
+		}
+
+		// Use the detected count, but still run through safety analysis.
+		$detected_count = count($high_hit_result['scripts']);
+
+		// Get safe candidate files, using detected count as the limit.
+		$candidates = $this->get_candidate_files_auto($high_hit_result['scripts']);
+
+		if (empty($candidates)) {
+			return [
+				'success' => false,
+				'error'   => __('No safe candidate files found among high-hit files.', 'opcache-preload-generator'),
+			];
+		}
+
+		// Generate test token.
+		$token = $this->tester->generate_test_token();
+
+		// Generate test file.
+		$settings = $this->plugin->get_settings();
+		$result   = $this->tester->generate_test_file($settings['output_path']);
+
+		if (true !== $result) {
+			return [
+				'success' => false,
+				'error'   => $result,
+			];
+		}
+
+		// Clear existing preload files for baseline test.
+		$existing_files = $this->plugin->get_preload_files();
+
+		// Store total candidates count for progress calculation.
+		$total_candidates = count($candidates);
+
+		// Initialize state.
+		$state = [
+			'status'           => 'running',
+			'phase'            => 'baseline',
+			'test_token'       => $token,
+			'baseline_time'    => 0,
+			'current_time'     => 0,
+			'best_time'        => 0,
+			'files_tested'     => 0,
+			'files_added'      => 0,
+			'files_failed'     => 0,
+			'failed_files'     => [],
+			'candidate_files'  => $candidates,
+			'total_candidates' => $total_candidates,
+			'current_file'     => '',
+			'time_saved_ms'    => 0,
+			'time_saved_pct'   => 0,
+			'last_error'       => '',
+			'started_at'       => time(),
+			'updated_at'       => time(),
+			'test_results'     => [],
+			'original_files'   => $existing_files,
+			'auto_mode'        => true,
+			'cutoff_hits'      => $high_hit_result['cutoff_hits'],
+			'cutoff_reason'    => $high_hit_result['reason'],
+		];
+
+		$this->save_state($state);
+
+		// Create the token file for the test script to read.
+		$token_file = ABSPATH . '.opcache_test_token';
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		file_put_contents($token_file, $token);
+
+		// Also store in transient as backup.
+		set_transient('opcache_test_token', $token, HOUR_IN_SECONDS);
+
+		return [
+			'success'          => true,
+			'state'            => $state,
+			'candidates_count' => $total_candidates,
+			'auto_detected'    => $detected_count,
+			'cutoff_hits'      => $high_hit_result['cutoff_hits'],
+			'cutoff_reason'    => $high_hit_result['reason'],
+			'reference_file'   => $high_hit_result['reference_file'] ?? '',
+			'reference_hits'   => $high_hit_result['reference_hits'] ?? 0,
 		];
 	}
 
@@ -281,6 +383,22 @@ class Auto_Optimizer {
 
 		$state = $this->get_state();
 
+		// If already completed, return success with completed flag.
+		// This handles race conditions where JS polls after completion.
+		if ('completed' === $state['status']) {
+			return [
+				'success'        => true,
+				'completed'      => true,
+				'files_added'    => $state['files_added'],
+				'files_failed'   => $state['files_failed'],
+				'baseline_time'  => $state['baseline_time'],
+				'final_time'     => $state['best_time'],
+				'time_saved_ms'  => $state['time_saved_ms'],
+				'time_saved_pct' => $state['time_saved_pct'],
+				'state'          => $state,
+			];
+		}
+
 		if ('running' !== $state['status'] || 'optimizing' !== $state['phase']) {
 			return [
 				'success' => false,
@@ -300,14 +418,16 @@ class Auto_Optimizer {
 
 		$this->save_state($state);
 
-		// Add file to preload list.
-		$current_files   = $this->plugin->get_preload_files();
-		$current_files[] = $candidate['file'];
-		$this->plugin->save_preload_files($current_files);
+		// Add file to preload list with require_once first (better performance if it works).
+		$files_config   = $this->plugin->get_preload_files_config();
+		$files_config[] = [
+			'path'   => $candidate['file'],
+			'method' => 'require_once',
+		];
+		$this->plugin->save_preload_files($files_config);
 
 		// Regenerate preload file.
 		$settings     = $this->plugin->get_settings();
-		$files_config = $this->plugin->get_preload_files_config();
 
 		$this->plugin->preload_generator->write_file(
 			$files_config,
@@ -323,13 +443,79 @@ class Auto_Optimizer {
 		// Run test.
 		$result = $this->run_test_with_token($state['test_token']);
 
+		// If test failed, try opcache_compile_file instead.
+		if (! $result['success']) {
+			// Update the file to use opcache_compile_file.
+			$this->plugin->update_file_method($candidate['file'], 'opcache_compile_file');
+
+			// Regenerate preload file with the new method.
+			$files_config = $this->plugin->get_preload_files_config();
+			$this->plugin->preload_generator->write_file(
+				$files_config,
+				$settings['output_path'],
+				[
+					'use_require'    => $settings['use_require'],
+					'validate_files' => true,
+					'output_path'    => $settings['output_path'],
+					'abspath'        => ABSPATH,
+				]
+			);
+
+			// Run test again with opcache_compile_file.
+			$result = $this->run_test_with_token($state['test_token']);
+
+			// If it works now, mark as added with fallback method.
+			if ($result['success']) {
+				$state = $this->get_state();
+				++$state['files_added'];
+				$state['current_time'] = $result['time_ms'];
+				$state['current_file'] = '';
+
+				if ($result['time_ms'] < $state['best_time']) {
+					$state['best_time'] = $result['time_ms'];
+				}
+
+				$state['time_saved_ms']  = round($state['baseline_time'] - $state['best_time'], 2);
+				$state['time_saved_pct'] = $state['baseline_time'] > 0
+					? round(($state['time_saved_ms'] / $state['baseline_time']) * 100, 1)
+					: 0;
+
+				$state['test_results'][] = [
+					'phase'     => 'optimize',
+					'file'      => $candidate['file'],
+					'time_ms'   => $result['time_ms'],
+					'files'     => $state['files_added'],
+					'method'    => 'opcache_compile_file',
+					'timestamp' => time(),
+				];
+
+				$this->save_state($state);
+
+				return [
+					'success'     => true,
+					'file_status' => 'added',
+					'file'        => $candidate['file'],
+					'time_ms'     => $result['time_ms'],
+					'method'      => 'opcache_compile_file',
+					'fallback'    => true,
+					'state'       => $state,
+				];
+			}
+		}
+
 		if (! $result['success']) {
 			// File caused an error - remove it and mark as failed.
-			$current_files = array_diff($current_files, [$candidate['file']]);
-			$this->plugin->save_preload_files($current_files);
+			$files_config = $this->plugin->get_preload_files_config();
+
+			foreach ($files_config as $key => $current_file) {
+				if ($current_file['path'] === $candidate['file']) {
+					unset($files_config[ $key ]);
+				}
+			}
+
+			$this->plugin->save_preload_files($files_config);
 
 			// Regenerate without the failed file.
-			$files_config = $this->plugin->get_preload_files_config();
 			$this->plugin->preload_generator->write_file(
 				$files_config,
 				$settings['output_path'],
@@ -529,6 +715,64 @@ class Auto_Optimizer {
 	}
 
 	/**
+	 * Get candidate files from pre-selected high-hit scripts.
+	 *
+	 * This method takes scripts already selected by the auto-detection algorithm
+	 * and filters them for safety and exclusion patterns.
+	 *
+	 * @param array<int, array<string, mixed>> $scripts Pre-selected high-hit scripts.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_candidate_files_auto(array $scripts): array {
+
+		$analyzer = $this->plugin->opcache_analyzer;
+		$settings = $this->plugin->get_settings();
+
+		// Filter to WordPress files only.
+		$scripts = $analyzer->filter_wordpress_scripts($scripts);
+
+		// Exclude patterns.
+		// $scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
+
+		// Get current preload files.
+		$current_files = $this->plugin->get_preload_files();
+		$failed_files  = $this->get_state()['failed_files'] ?? [];
+		$failed_paths  = array_column($failed_files, 'file');
+
+		// Filter and analyze for safety.
+		$candidates = [];
+
+		foreach ($scripts as $script) {
+			$path = $script['full_path'];
+
+			// Skip if already in preload list.
+			if (in_array($path, $current_files, true)) {
+				continue;
+			}
+
+			// Skip if previously failed.
+			// if (in_array($path, $failed_paths, true)) {
+			// continue;
+			// }
+			//
+			// Analyze for safety.
+			// $analysis = $this->plugin->safety_analyzer->analyze_file($path);
+			//
+			// Only include safe files.
+			// if ($analysis['safe'] && empty($analysis['errors'])) {
+				$candidates[] = [
+					'file'   => $path,
+					'hits'   => $script['hits'] ?? 0,
+					'memory' => $script['memory_consumption'] ?? 0,
+			// 'warnings' => $analysis['warnings'],
+				];
+				// }
+		}
+
+		return $candidates;
+	}
+
+	/**
 	 * Run test with the stored token.
 	 *
 	 * The token file is created once at the start of optimization (in start())
@@ -556,5 +800,36 @@ class Auto_Optimizer {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
 			unlink($token_file);
 		}
+	}
+
+	/**
+	 * Check if a test result indicates a redeclaration error.
+	 *
+	 * These errors occur when require_once is used but WordPress loads
+	 * the same file with plain require. In this case, we can fall back
+	 * to opcache_compile_file which doesn't execute the file.
+	 *
+	 * @param array $result Test result.
+	 * @return bool
+	 */
+	private function is_redeclaration_error(array $result): bool {
+
+		$error = $result['error'] ?? '';
+
+		// Check for common redeclaration error patterns.
+		$patterns = [
+			'Cannot redeclare',
+			'Cannot declare',
+			'already declared',
+			'has already been declared',
+		];
+
+		foreach ($patterns as $pattern) {
+			if (false !== stripos($error, $pattern)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

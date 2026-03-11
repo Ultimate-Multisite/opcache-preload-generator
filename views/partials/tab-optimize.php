@@ -124,12 +124,13 @@ $state = $this->plugin->auto_optimizer->get_state();
 		<div class="opcache-optimize-controls">
 			<div class="opcache-form-row">
 				<label for="optimize-max-files">
-					<?php esc_html_e('Maximum files to test:', 'opcache-preload-generator'); ?>
+					<?php esc_html_e('Files to test:', 'opcache-preload-generator'); ?>
 				</label>
 				<select id="optimize-max-files">
+					<option value="auto" selected><?php esc_html_e('Auto (detect high-hit files)', 'opcache-preload-generator'); ?></option>
 					<option value="25">25</option>
 					<option value="50">50</option>
-					<option value="100" selected>100</option>
+					<option value="100">100</option>
 					<option value="200">200</option>
 					<option value="500">500</option>
 				</select>

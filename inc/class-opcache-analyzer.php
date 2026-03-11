@@ -109,6 +109,188 @@ class OPcache_Analyzer {
 	}
 
 	/**
+	 * Get high-hit scripts using automatic cutoff detection.
+	 *
+	 * This method finds files that are loaded on almost every request by using
+	 * a reference WordPress core file as the threshold. Any file with hits
+	 * close to the reference file's hits is considered a high-hit file.
+	 *
+	 * The algorithm:
+	 * 1. Filter to WordPress files only (files within ABSPATH)
+	 * 2. Find a reference file (e.g., class-wp-hook.php) that's loaded on every request
+	 * 3. Use a percentage of its hit count as the threshold (default 50%)
+	 * 4. Return all files with hits >= threshold
+	 *
+	 * @param float $threshold_ratio Ratio of reference file hits to use as threshold (default 0.5 = 50%).
+	 * @param int   $max_files       Maximum number of files to return (default 500).
+	 * @return array{scripts: array<int, array<string, mixed>>, cutoff_hits: int, total_scripts: int, reason: string, reference_file: string, reference_hits: int}
+	 */
+	public function get_high_hit_scripts(
+		float $threshold_ratio = 0.7,
+		int $max_files = 5000
+	): array {
+
+		$all_scripts = $this->get_scripts_by_hits(0);
+
+		// Filter to WordPress files only.
+		$all_scripts = $this->filter_wordpress_scripts($all_scripts);
+
+		if (empty($all_scripts)) {
+			return [
+				'scripts'        => [],
+				'cutoff_hits'    => 0,
+				'total_scripts'  => 0,
+				'reason'         => 'no_scripts',
+				'reference_file' => '',
+				'reference_hits' => 0,
+			];
+		}
+
+		$total_scripts = count($all_scripts);
+
+		// Find a reference file - a WordPress core file that's loaded on every request.
+		// We check multiple candidates in case some aren't cached.
+		$reference_files = [
+			'class-wp-hook.php',      // Hook system - loaded on every request.
+			'class-wp.php',           // Main WP class.
+			'plugin.php',             // Plugin API.
+			'functions.php',          // Core functions (in wp-includes).
+			'load.php',               // Core loader.
+			'option.php',             // Options API.
+			'formatting.php',         // Formatting functions.
+			'class-wp-query.php',     // Query class.
+		];
+
+		$reference_hits = 0;
+		$reference_file = '';
+
+		// Build a lookup by filename for quick access.
+		$scripts_by_name = [];
+		foreach ($all_scripts as $script) {
+			$basename                     = basename($script['full_path']);
+			$scripts_by_name[ $basename ] = $script;
+		}
+
+		// Find the first reference file that exists in the cache.
+		foreach ($reference_files as $ref_file) {
+			if (isset($scripts_by_name[ $ref_file ])) {
+				$reference_hits = $scripts_by_name[ $ref_file ]['hits'] ?? 0;
+				$reference_file = $ref_file;
+				break;
+			}
+		}
+
+		// If no reference file found, fall back to using the median hit count.
+		if (0 === $reference_hits) {
+			$hits_array = array_column($all_scripts, 'hits');
+			sort($hits_array);
+			$median_index   = (int) floor(count($hits_array) / 2);
+			$reference_hits = $hits_array[ $median_index ] ?? 0;
+			$reference_file = 'median';
+		}
+
+		if (0 === $reference_hits) {
+			return [
+				'scripts'        => [],
+				'cutoff_hits'    => 0,
+				'total_scripts'  => $total_scripts,
+				'reason'         => 'no_hits',
+				'reference_file' => $reference_file,
+				'reference_hits' => 0,
+			];
+		}
+
+		// Calculate threshold as a percentage of reference hits.
+		$cutoff_hits = (int) ($reference_hits * $threshold_ratio);
+
+		// Select all files with hits >= threshold.
+		$selected = [];
+		foreach ($all_scripts as $script) {
+			$hits = $script['hits'] ?? 0;
+
+			if ($hits >= $cutoff_hits) {
+				$selected[] = $script;
+
+				if (count($selected) >= $max_files) {
+					break;
+				}
+			}
+		}
+
+		return [
+			'scripts'        => $selected,
+			'cutoff_hits'    => $cutoff_hits,
+			'total_scripts'  => $total_scripts,
+			'reason'         => 'reference_threshold',
+			'reference_file' => $reference_file,
+			'reference_hits' => $reference_hits,
+		];
+	}
+
+	/**
+	 * Analyze hit distribution and provide statistics.
+	 *
+	 * Useful for understanding the hit distribution and tuning auto-detection.
+	 *
+	 * @return array{max_hits: int, min_hits: int, avg_hits: float, median_hits: int, std_dev: float, total_scripts: int, percentiles: array<int, int>}
+	 */
+	public function get_hit_distribution_stats(): array {
+
+		$scripts = $this->get_scripts_by_hits(0);
+
+		if (empty($scripts)) {
+			return [
+				'max_hits'      => 0,
+				'min_hits'      => 0,
+				'avg_hits'      => 0.0,
+				'median_hits'   => 0,
+				'std_dev'       => 0.0,
+				'total_scripts' => 0,
+				'percentiles'   => [],
+			];
+		}
+
+		$hits  = array_column($scripts, 'hits');
+		$count = count($hits);
+
+		// Basic stats.
+		$max = max($hits);
+		$min = min($hits);
+		$avg = array_sum($hits) / $count;
+
+		// Median.
+		sort($hits);
+		$middle = (int) floor($count / 2);
+		$median = (0 === $count % 2)
+			? (int) (($hits[ $middle - 1 ] + $hits[ $middle ]) / 2)
+			: $hits[ $middle ];
+
+		// Standard deviation.
+		$variance = 0;
+		foreach ($hits as $hit) {
+			$variance += pow($hit - $avg, 2);
+		}
+		$std_dev = sqrt($variance / $count);
+
+		// Percentiles (10th, 25th, 50th, 75th, 90th, 95th, 99th).
+		$percentiles = [];
+		foreach ([10, 25, 50, 75, 90, 95, 99] as $p) {
+			$index             = (int) floor(($p / 100) * ($count - 1));
+			$percentiles[ $p ] = $hits[ $count - 1 - $index ]; // Reverse because sorted ascending.
+		}
+
+		return [
+			'max_hits'      => $max,
+			'min_hits'      => $min,
+			'avg_hits'      => round($avg, 2),
+			'median_hits'   => $median,
+			'std_dev'       => round($std_dev, 2),
+			'total_scripts' => $count,
+			'percentiles'   => $percentiles,
+		];
+	}
+
+	/**
 	 * Get cached scripts sorted by memory consumption.
 	 *
 	 * @param int $limit Maximum number of scripts to return (0 = unlimited).

@@ -348,6 +348,9 @@ class Plugin {
 	public function get_settings(): array {
 
 		$defaults = [
+			// Default to require_once for better performance (classes/functions pre-loaded).
+			// The auto-optimizer will automatically fall back to opcache_compile_file
+			// for files that cause redeclaration errors.
 			'use_require'      => true,
 			'output_path'      => ABSPATH . 'preload.php',
 			'auto_suggest_top' => 50,
@@ -361,8 +364,6 @@ class Plugin {
 				'*/docket-cache/*',
 				'*/docket-cache-data/*',
 				'*/wp-content/cache/*',
-				// Object cache drop-in - changes with cache and shouldn't be preloaded.
-				'*/object-cache.php',
 			],
 		];
 
