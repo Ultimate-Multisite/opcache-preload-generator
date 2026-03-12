@@ -1,0 +1,11 @@
+parameters:
+    level: 5
+    paths:
+        - inc
+    scanDirectories:
+        - /home/dave/multisite/wordpress
+    bootstrapFiles:
+        - vendor/autoload.php
+    ignoreErrors:
+        # WordPress functions are loaded at runtime, not via autoloader
+        - '#Function [a-z_]+ not found#'
