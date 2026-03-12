@@ -427,7 +427,7 @@ class Auto_Optimizer {
 		$this->plugin->save_preload_files($files_config);
 
 		// Regenerate preload file.
-		$settings     = $this->plugin->get_settings();
+		$settings = $this->plugin->get_settings();
 
 		$this->plugin->preload_generator->write_file(
 			$files_config,
@@ -731,8 +731,8 @@ class Auto_Optimizer {
 		// Filter to WordPress files only.
 		$scripts = $analyzer->filter_wordpress_scripts($scripts);
 
-		// Exclude patterns.
-		// $scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
+		// Exclude patterns from settings.
+		$scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
 
 		// Get current preload files.
 		$current_files = $this->plugin->get_preload_files();
@@ -751,22 +751,22 @@ class Auto_Optimizer {
 			}
 
 			// Skip if previously failed.
-			// if (in_array($path, $failed_paths, true)) {
-			// continue;
-			// }
-			//
+			if (in_array($path, $failed_paths, true)) {
+				continue;
+			}
+
 			// Analyze for safety.
-			// $analysis = $this->plugin->safety_analyzer->analyze_file($path);
-			//
+			$analysis = $this->plugin->safety_analyzer->analyze_file($path);
+
 			// Only include safe files.
-			// if ($analysis['safe'] && empty($analysis['errors'])) {
+			if ($analysis['safe'] && empty($analysis['errors'])) {
 				$candidates[] = [
-					'file'   => $path,
-					'hits'   => $script['hits'] ?? 0,
-					'memory' => $script['memory_consumption'] ?? 0,
-			// 'warnings' => $analysis['warnings'],
+					'file'     => $path,
+					'hits'     => $script['hits'] ?? 0,
+					'memory'   => $script['memory_consumption'] ?? 0,
+					'warnings' => $analysis['warnings'],
 				];
-				// }
+			}
 		}
 
 		return $candidates;

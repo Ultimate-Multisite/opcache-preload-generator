@@ -87,7 +87,12 @@ class Plugin {
 	 */
 	public ?Dependency_Resolver $dependency_resolver = null;
 
-
+	/**
+	 * REST API instance.
+	 *
+	 * @var Rest_API|null
+	 */
+	public ?Rest_API $rest_api = null;
 
 	/**
 	 * Main instance.
@@ -141,12 +146,17 @@ class Plugin {
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-generator.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-tester.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-auto-optimizer.php';
+		require_once OPCACHE_PRELOAD_DIR . 'inc/class-rest-api.php';
 
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-admin-page.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-ajax-handler.php';
 
 		if (is_admin()) {
 			require_once OPCACHE_PRELOAD_DIR . 'inc/class-file-list-table.php';
+		}
+
+		if (defined('WP_CLI') && WP_CLI) {
+			require_once OPCACHE_PRELOAD_DIR . 'inc/class-cli-command.php';
 		}
 	}
 
@@ -163,10 +173,15 @@ class Plugin {
 		$this->preload_generator   = new Preload_Generator($this->safety_analyzer, $this->dependency_resolver);
 		$this->preload_tester      = new Preload_Tester();
 		$this->auto_optimizer      = new Auto_Optimizer($this, $this->preload_tester);
+		$this->rest_api            = new Rest_API($this);
 
 		if (is_admin()) {
 			$this->admin_page   = new Admin_Page($this);
 			$this->ajax_handler = new Ajax_Handler($this);
+		}
+
+		if (defined('WP_CLI') && WP_CLI) {
+			\WP_CLI::add_command('opcache-preload', __NAMESPACE__ . '\\CLI_Command');
 		}
 	}
 
@@ -359,11 +374,9 @@ class Plugin {
 				'*/tests/*',
 				'*/vendor/*test*',
 				'*/phpunit/*',
-				// Cache directories - these change frequently and shouldn't be preloaded.
-				'*/cache/*',
-				'*/docket-cache/*',
-				'*/docket-cache-data/*',
-				'*/wp-content/cache/*',
+				'*/docket-cache/cache.php',
+				'*/docket-cache/load.php',
+				'*/docket-cache/compat.php',
 			],
 		];
 

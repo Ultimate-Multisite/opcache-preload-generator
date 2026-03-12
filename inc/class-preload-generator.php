@@ -88,10 +88,10 @@ class Preload_Generator {
 	}
 
 	/**
-	 * Sort files by dependency order and mark unresolvable files.
+	 * Sort files by dependency order and skip unresolvable files.
 	 *
-	 * Files with unresolvable dependencies (parent classes not in list)
-	 * will use opcache_compile_file instead of require_once.
+	 * All files use opcache_compile_file (compile-only, no execution) to avoid
+	 * dependency ordering issues that require_once would introduce.
 	 *
 	 * @param array<string|array<string, mixed>> $files   Array of file paths or file config arrays.
 	 * @param array<string, mixed>               $options Generation options.
@@ -99,19 +99,15 @@ class Preload_Generator {
 	 */
 	private function sort_files_by_dependencies(array $files, array $options): array {
 
-		$default_method = $options['use_require'] ? 'require_once' : 'opcache_compile_file';
-
 		// Normalize files to config array format and extract paths.
 		$normalized = [];
 		$paths      = [];
 
 		foreach ($files as $file) {
 			if (is_array($file)) {
-				$path   = $file['path'] ?? '';
-				$method = $file['method'] ?? $default_method;
+				$path = $file['path'] ?? '';
 			} else {
-				$path   = $file;
-				$method = $default_method;
+				$path = $file;
 			}
 
 			if (empty($path) || ! file_exists($path)) {
@@ -121,7 +117,7 @@ class Preload_Generator {
 			$paths[]      = $path;
 			$normalized[] = [
 				'path'   => $path,
-				'method' => $method,
+				'method' => 'opcache_compile_file',
 			];
 		}
 
@@ -150,37 +146,64 @@ class Preload_Generator {
 		// Reset skipped files tracking.
 		$this->skipped_files = [];
 
-		// Add sorted files, but skip those with unresolved dependencies.
-		// Files with unresolved dependencies cannot be preloaded because
-		// PHP cannot compile a class whose parent class doesn't exist.
+		// Determine method per file. require_once is used when BOTH conditions hold:
+		// 1. File has only declarations (no side effects) — checked by tokenizer.
+		// 2. All dependencies are resolved — extends/implements/use-trait targets are
+		// either PHP/WP built-ins or files earlier in the sorted preload list.
+		// This makes the class/interface/function globally available from PHP start,
+		// with zero per-request loading cost.
+		//
+		// opcache_compile_file is used for everything else. It compiles bytecode into
+		// the opcode cache (faster loading) but doesn't define symbols globally —
+		// the file still needs to be required at runtime. It handles missing parent
+		// classes gracefully (non-fatal "Can't preload unlinked class" warning).
+		$resolved_paths = [];
+
 		foreach ($sorted_paths as $path) {
-			$original_method = $method_lookup[ $path ] ?? $default_method;
-
-			// Check for unresolved dependencies in this file.
 			$unresolved = $this->dependency_resolver->get_unresolved_dependencies($path, $sorted_paths);
+			$deps = $this->dependency_resolver->get_file_dependencies($path);
+			$deps[] = $path;
 
-			// Skip files with unresolved dependencies - they cannot be preloaded.
+
 			if (! empty($unresolved)) {
 				$this->skipped_files[] = [
 					'path'         => $path,
 					'reason'       => 'unresolved_dependencies',
 					'dependencies' => $unresolved,
 				];
-				continue;
 			}
 
-			$result[] = [
+			// Use require_once only when safe: no side effects AND all deps resolved.
+			if (empty($unresolved)) {
+				$method = 'require_once';
+				foreach ($deps as $dep_path) { // AND all deps have no side effects.
+					if ($this->safety_analyzer->get_recommended_method($dep_path) !== 'require_once') {
+						$method = 'opcache_compile_file';
+					}
+				}
+			} else {
+				$method = 'opcache_compile_file';
+			}
+
+			$result[]         = [
 				'path'   => $path,
-				'method' => $original_method,
+				'method' => $method,
 			];
+			$resolved_paths[] = $path;
 		}
 
-		// Track unresolvable files (circular dependencies).
+		// Include unresolvable files too (circular dependencies).
+		// opcache_compile_file handles these gracefully.
 		foreach ($unresolvable as $path) {
 			$this->skipped_files[] = [
 				'path'         => $path,
 				'reason'       => 'circular_dependency',
 				'dependencies' => [],
+			];
+
+			$result[] = [
+				'path'   => $path,
+				'method' => 'opcache_compile_file',
 			];
 		}
 
@@ -206,11 +229,23 @@ class Preload_Generator {
 	 */
 	private function generate_header(array $files, array $options): string {
 
-		$method      = $options['use_require'] ? 'require_once' : 'opcache_compile_file';
 		$file_count  = count($files);
 		$timestamp   = gmdate('Y-m-d H:i:s');
 		$output_path = $options['output_path'] ?? '';
 		$abspath     = $options['abspath'] ?? ABSPATH;
+
+		// Count methods for header metadata.
+		$require_count = 0;
+		$compile_count = 0;
+		foreach ($files as $file) {
+			$method = is_array($file) ? ($file['method'] ?? 'opcache_compile_file') : 'opcache_compile_file';
+			if ('require_once' === $method) {
+				++$require_count;
+			} else {
+				++$compile_count;
+			}
+		}
+		$method_summary = "{$require_count} require_once, {$compile_count} opcache_compile_file";
 
 		$header = <<<PHP
 <?php
@@ -223,7 +258,7 @@ class Preload_Generator {
  * ABSPATH: {$abspath}
  *
  * Files included: {$file_count}
- * Default Method: {$method}
+ * Methods: {$method_summary}
  *
  * INSTRUCTIONS:
  * 1. Copy this file to your WordPress root directory (or a location of your choice)
@@ -286,48 +321,119 @@ PHP;
 	/**
 	 * Generate the file includes section.
 	 *
+	 * Files are grouped by preload method:
+	 *
+	 * - require_once: Pure declaration files (class/interface/trait/enum) with all
+	 *   dependencies resolved. Executes the file, making symbols globally available
+	 *   from PHP start — zero per-request loading cost. Dependency-sorted so parent
+	 *   classes/interfaces are loaded before children.
+	 *
+	 * - opcache_compile_file: Everything else. Compiles bytecode into the opcode
+	 *   cache without executing. Handles missing parent classes gracefully (non-fatal
+	 *   warning). The file still needs to be required at runtime, but loads faster
+	 *   from the opcode cache.
+	 *
 	 * @param array<string|array<string, mixed>> $files   Array of file paths or file config arrays.
 	 * @param array<string, mixed>               $options Generation options.
 	 * @return string
 	 */
 	private function generate_file_includes(array $files, array $options): string {
 
-		$content        = '';
-		$default_method = $options['use_require'] ? 'require_once' : 'opcache_compile_file';
+		$content = '';
 
-		$content .= "// Preload files.\n";
+		// Group files by method for readable output.
+		$require_files = [];
+		$compile_files = [];
 
 		foreach ($files as $file) {
-			// Support both simple paths and config arrays.
 			if (is_array($file)) {
 				$path   = $file['path'] ?? '';
-				$method = $file['method'] ?? $default_method;
+				$method = $file['method'] ?? 'opcache_compile_file';
 			} else {
 				$path   = $file;
-				$method = $default_method;
+				$method = 'opcache_compile_file';
 			}
 
 			if (empty($path)) {
 				continue;
 			}
 
-			// Validate method.
-			if (! in_array($method, ['require_once', 'opcache_compile_file'], true)) {
-				$method = $default_method;
-			}
-
-			$escaped_path = addslashes($path);
-
-			if ($options['validate_files']) {
-				$content .= "if (file_exists('{$escaped_path}')) {\n";
-				$content .= "\t{$method}('{$escaped_path}');\n";
-				$content .= "}\n";
+			if ('require_once' === $method) {
+				$require_files[] = $path;
 			} else {
-				$content .= "{$method}('{$escaped_path}');\n";
+				$compile_files[] = $path;
+			}
+		}
+
+		// Emit require_once files first (dependency-sorted, symbols globally available).
+		if (! empty($require_files)) {
+			$content .= "// Preload via require_once — pure declarations, all dependencies resolved.\n";
+			$content .= "// These classes/interfaces/functions are globally available from PHP start.\n";
+
+			foreach ($require_files as $path) {
+				$escaped_path = addslashes($path);
+
+				if ($options['validate_files']) {
+					$content .= "if (file_exists('{$escaped_path}')) {\n";
+					$content .= "\trequire_once '{$escaped_path}';\n";
+					$content .= "}\n";
+				} else {
+					$content .= "require_once '{$escaped_path}';\n";
+				}
+			}
+		}
+
+		// Emit opcache_compile_file files (bytecode cached, loaded faster at runtime).
+		if (! empty($compile_files)) {
+			if (! empty($require_files)) {
+				$content .= "\n";
+			}
+			$content .= "// Preload via opcache_compile_file — bytecode cached, loaded faster at runtime.\n";
+
+			foreach ($compile_files as $path) {
+				$escaped_path = addslashes($path);
+
+				if ($options['validate_files']) {
+					$content .= "if (file_exists('{$escaped_path}')) {\n";
+					$content .= "\topcache_compile_file('{$escaped_path}');\n";
+					$content .= "}\n";
+				} else {
+					$content .= "opcache_compile_file('{$escaped_path}');\n";
+				}
 			}
 		}
 
 		return $content;
+	}
+
+	/**
+	 * Get the first class, interface, or trait defined in a file.
+	 *
+	 * Uses the dependency resolver's parser to extract definitions.
+	 * Returns the fully-qualified class name for use in class_exists() guards,
+	 * or null if the file doesn't define any classes.
+	 *
+	 * @param string $path Full path to the PHP file.
+	 * @return string|null First defined class name, or null.
+	 */
+	private function get_first_defined_class(string $path): ?string {
+
+		$data = $this->dependency_resolver->parse_file($path);
+
+		// Check classes first, then interfaces, then traits.
+		if (! empty($data['classes'])) {
+			return $data['classes'][0];
+		}
+
+		if (! empty($data['interfaces'])) {
+			return $data['interfaces'][0];
+		}
+
+		if (! empty($data['traits'])) {
+			return $data['traits'][0];
+		}
+
+		return null;
 	}
 
 	/**

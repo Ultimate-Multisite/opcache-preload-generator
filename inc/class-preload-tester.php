@@ -93,7 +93,12 @@ try {
 	$start_time = hrtime(true);
 	$start_memory = memory_get_usage(true);
 
-	include 'preload.php';
+	// NOTE: We do NOT include preload.php here. The preload file is designed
+	// for PHP-FPM startup (opcache.preload) only. Including it in a normal
+	// web request causes opcache_compile_file() to make functions/classes
+	// available in the current process, and then WordPress's own require/include
+	// of those same files causes "Cannot redeclare" fatal errors.
+	// Instead, we just load WordPress normally and verify the site works.
 
 	// Define ABSPATH if not already defined.
 	if (!defined('ABSPATH')) {

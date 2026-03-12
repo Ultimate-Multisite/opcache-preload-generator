@@ -149,34 +149,34 @@ class OPcache_Analyzer {
 		$total_scripts = count($all_scripts);
 
 		// Find a reference file - a WordPress core file that's loaded on every request.
-		// We check multiple candidates in case some aren't cached.
+		// We use path suffixes (not bare basenames) to avoid matching plugin/theme
+		// files with the same name (e.g., plugin.php, functions.php, load.php).
+		// l10n.php is the primary reference because its hit count is representative
+		// of "loaded on every request" without being an outlier like class-wp-hook.php.
 		$reference_files = [
-			'class-wp-hook.php',      // Hook system - loaded on every request.
-			'class-wp.php',           // Main WP class.
-			'plugin.php',             // Plugin API.
-			'functions.php',          // Core functions (in wp-includes).
-			'load.php',               // Core loader.
-			'option.php',             // Options API.
-			'formatting.php',         // Formatting functions.
-			'class-wp-query.php',     // Query class.
+			'wp-includes/l10n.php',               // Localization - loaded on every request.
+			'wp-includes/option.php',             // Options API.
+			'wp-includes/formatting.php',         // Formatting functions.
+			'wp-includes/class-wp.php',           // Main WP class.
+			'wp-includes/class-wp-query.php',     // Query class.
+			'wp-includes/load.php',               // Core loader.
+			'wp-includes/plugin.php',             // Plugin API.
+			'wp-includes/functions.php',          // Core functions.
 		];
 
 		$reference_hits = 0;
 		$reference_file = '';
 
-		// Build a lookup by filename for quick access.
-		$scripts_by_name = [];
-		foreach ($all_scripts as $script) {
-			$basename                     = basename($script['full_path']);
-			$scripts_by_name[ $basename ] = $script;
-		}
-
-		// Find the first reference file that exists in the cache.
-		foreach ($reference_files as $ref_file) {
-			if (isset($scripts_by_name[ $ref_file ])) {
-				$reference_hits = $scripts_by_name[ $ref_file ]['hits'] ?? 0;
-				$reference_file = $ref_file;
-				break;
+		// Find the first reference file (in priority order) that exists in the cache.
+		// Outer loop is the reference list so l10n.php is checked before fallbacks.
+		foreach ($reference_files as $ref_suffix) {
+			foreach ($all_scripts as $script) {
+				$path = $script['full_path'] ?? '';
+				if (substr($path, -strlen($ref_suffix)) === $ref_suffix) {
+					$reference_hits = $script['hits'] ?? 0;
+					$reference_file = $ref_suffix;
+					break 2;
+				}
 			}
 		}
 

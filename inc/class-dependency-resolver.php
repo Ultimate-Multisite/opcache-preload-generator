@@ -90,25 +90,15 @@ class Dependency_Resolver {
 	/**
 	 * WordPress core classes that are loaded early.
 	 *
+	 * NOTE: This list is intentionally empty. WordPress classes are NOT available
+	 * during PHP-FPM preload (before WordPress boots). They must be resolved
+	 * against the preload file list like any other dependency. The previous list
+	 * (WP_Widget, WP_REST_Controller, etc.) caused files to be preloaded via
+	 * require_once without their parent classes, crashing PHP-FPM on startup.
+	 *
 	 * @var array<string>
 	 */
-	private array $wp_core_classes = [
-		'WP_Error',
-		'WP_Hook',
-		'WP_Query',
-		'WP_Post',
-		'WP_User',
-		'WP_Term',
-		'WP_REST_Controller',
-		'WP_REST_Request',
-		'WP_REST_Response',
-		'WP_Widget',
-		'WP_Customize_Control',
-		'WP_Customize_Setting',
-		'Walker',
-		'Walker_Nav_Menu',
-		'wpdb',
-	];
+	private array $wp_core_classes = [];
 
 	/**
 	 * Parse a PHP file to extract class information.
@@ -274,6 +264,13 @@ class Dependency_Resolver {
 	/**
 	 * Check if a class is a core PHP or WordPress class.
 	 *
+	 * Only checks against hardcoded lists of known core classes. Does NOT use
+	 * class_exists() because the dependency resolver runs in WP-CLI context
+	 * where WordPress has already loaded many classes via autoloaders. Those
+	 * classes won't be available during PHP-FPM preload (before WordPress boots),
+	 * so treating them as "already available" causes files to be included in the
+	 * preload without their dependencies.
+	 *
 	 * @param string $class_name Class name.
 	 * @return bool
 	 */
@@ -288,11 +285,6 @@ class Dependency_Resolver {
 
 		// WordPress core classes.
 		if (in_array($class_name, $this->wp_core_classes, true)) {
-			return true;
-		}
-
-		// Check if class already exists (loaded by WordPress).
-		if (class_exists($class_name, false) || interface_exists($class_name, false) || trait_exists($class_name, false)) {
 			return true;
 		}
 
