@@ -607,10 +607,8 @@ class DependencyVisitor implements NodeVisitor {
 
 		// Check for property type declarations.
 		if ($node instanceof Node\Stmt\Property) {
-			foreach ($node->props as $prop) {
-				if ($prop->type && $prop->type instanceof Node\Name) {
-					$this->add_dependency($prop->type->toString());
-				}
+			if ($node->type && $node->type instanceof Node\Name) {
+				$this->add_dependency($node->type->toString());
 			}
 		}
 
