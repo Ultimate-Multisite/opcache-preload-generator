@@ -113,26 +113,18 @@ class Admin_Page {
 				'ajaxUrl' => admin_url('admin-ajax.php'),
 				'nonce'   => wp_create_nonce('opcache_preload_nonce'),
 				'i18n'    => [
-					'confirm_delete'    => __('Are you sure you want to delete the preload file? You should update your php.ini configuration first.', 'opcache-preload-generator'),
-					'confirm_remove'    => __('Are you sure you want to remove this file from the preload list?', 'opcache-preload-generator'),
-					'confirm_reset'     => __('Are you sure you want to reset the optimization? This will clear the current progress.', 'opcache-preload-generator'),
-					'analyzing'         => __('Analyzing...', 'opcache-preload-generator'),
-					'generating'        => __('Generating...', 'opcache-preload-generator'),
-					'success'           => __('Success!', 'opcache-preload-generator'),
-					'error'             => __('Error:', 'opcache-preload-generator'),
-					'copied'            => __('Copied to clipboard!', 'opcache-preload-generator'),
-					'copy_failed'       => __('Failed to copy. Please select and copy manually.', 'opcache-preload-generator'),
-					'no_files_selected' => __('No files selected for analysis.', 'opcache-preload-generator'),
-					'opt_starting'      => __('Starting optimization...', 'opcache-preload-generator'),
-					'opt_baseline'      => __('Running baseline test...', 'opcache-preload-generator'),
-					'opt_testing'       => __('Testing files...', 'opcache-preload-generator'),
-					'opt_complete'      => __('Optimization complete!', 'opcache-preload-generator'),
-					'opt_stopped'       => __('Optimization stopped.', 'opcache-preload-generator'),
-					'opt_error'         => __('Optimization error:', 'opcache-preload-generator'),
-					'files_tested'      => __('files tested', 'opcache-preload-generator'),
-					'added'             => __('added', 'opcache-preload-generator'),
-					'failed'            => __('failed', 'opcache-preload-generator'),
-					'testing'           => __('Testing:', 'opcache-preload-generator'),
+					'confirm_delete'   => __('Are you sure you want to delete the preload file? You should update your php.ini configuration first.', 'opcache-preload-generator'),
+					'generating'       => __('Generating...', 'opcache-preload-generator'),
+					'success'          => __('Success!', 'opcache-preload-generator'),
+					'error'            => __('Error:', 'opcache-preload-generator'),
+					'copied'           => __('Copied to clipboard!', 'opcache-preload-generator'),
+					'copy_failed'      => __('Failed to copy. Please select and copy manually.', 'opcache-preload-generator'),
+					'show_preview'     => __('Show Generated File Preview', 'opcache-preload-generator'),
+					'hide_preview'     => __('Hide Preview', 'opcache-preload-generator'),
+					'loading'          => __('Loading...', 'opcache-preload-generator'),
+					'cutoff_info'      => __('Cutoff: %s hits (reference: %s with %s hits)', 'opcache-preload-generator'),
+					'no_candidates'    => __('No candidate files found at this threshold. Try a lower value.', 'opcache-preload-generator'),
+					'no_candidates_near' => __('No files near the cutoff threshold.', 'opcache-preload-generator'),
 				],
 			]
 		);
@@ -151,36 +143,7 @@ class Admin_Page {
 			wp_die(esc_html__('You do not have sufficient permissions to access this page.', 'opcache-preload-generator'));
 		}
 
-		// Get current tab.
-		$current_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-
-		$tabs = [
-			'overview' => __('Overview', 'opcache-preload-generator'),
-			'optimize' => __('Auto-Optimize', 'opcache-preload-generator'),
-			'files'    => __('Manage Files', 'opcache-preload-generator'),
-			'analyze'  => __('Analyze Files', 'opcache-preload-generator'),
-			'generate' => __('Generate', 'opcache-preload-generator'),
-			'help'     => __('How it Works', 'opcache-preload-generator'),
-		];
-
 		include OPCACHE_PRELOAD_DIR . 'views/admin-page.php';
-	}
-
-	/**
-	 * Get the current tab content file.
-	 *
-	 * @param string $tab Tab identifier.
-	 * @return string
-	 */
-	public function get_tab_content_file(string $tab): string {
-
-		$valid_tabs = ['overview', 'optimize', 'files', 'analyze', 'generate', 'help'];
-
-		if (! in_array($tab, $valid_tabs, true)) {
-			$tab = 'overview';
-		}
-
-		return OPCACHE_PRELOAD_DIR . "views/partials/tab-{$tab}.php";
 	}
 
 	/**
@@ -285,19 +248,6 @@ class Admin_Page {
 		}
 
 		return $path;
-	}
-
-	/**
-	 * Check if a file is in the current preload list.
-	 *
-	 * @param string $path File path.
-	 * @return bool
-	 */
-	public function is_in_preload_list(string $path): bool {
-
-		$files = $this->plugin->get_preload_files();
-
-		return in_array($path, $files, true);
 	}
 
 	/**

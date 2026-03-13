@@ -58,7 +58,6 @@ class File_List_Table extends \WP_List_Table {
 			'cb'       => '<input type="checkbox" />',
 			'file'     => __('File', 'opcache-preload-generator'),
 			'status'   => __('Status', 'opcache-preload-generator'),
-			'method'   => __('Method', 'opcache-preload-generator'),
 			'size'     => __('Size', 'opcache-preload-generator'),
 			'modified' => __('Modified', 'opcache-preload-generator'),
 			'actions'  => __('Actions', 'opcache-preload-generator'),
@@ -204,30 +203,6 @@ class File_List_Table extends \WP_List_Table {
 		$analysis = $this->plugin->safety_analyzer->analyze_file($item['file']);
 
 		return $this->plugin->admin_page->get_analysis_badge($analysis);
-	}
-
-	/**
-	 * Render the method column.
-	 *
-	 * @param array<string, mixed> $item Item data.
-	 * @return string
-	 */
-	public function column_method($item): string {
-
-		$method  = $item['method'] ?? 'require_once';
-		$file    = esc_attr($item['file']);
-		$require = 'require_once' === $method ? 'selected' : '';
-		$compile = 'opcache_compile_file' === $method ? 'selected' : '';
-
-		return sprintf(
-			'<select class="opcache-method-select" data-file="%s">
-				<option value="require_once" %s>require_once</option>
-				<option value="opcache_compile_file" %s>opcache_compile_file</option>
-			</select>',
-			$file,
-			$require,
-			$compile
-		);
 	}
 
 	/**

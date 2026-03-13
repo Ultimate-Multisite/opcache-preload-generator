@@ -30,11 +30,14 @@ class Rest_API {
 	const NAMESPACE = 'opcache-preload/v1';
 
 	/**
-	 * Transient key for CLI-to-REST auth tokens.
+	 * File path for CLI-to-REST auth tokens.
+	 *
+	 * Uses a file instead of transients to avoid issues with object caching
+	 * plugins (e.g., Docket Cache) that don't share cache between CLI and web.
 	 *
 	 * @var string
 	 */
-	const AUTH_TRANSIENT_KEY = 'opcache_preload_cli_token';
+	const AUTH_TOKEN_FILE = WP_CONTENT_DIR . '/.opcache_preload_auth_token';
 
 	/**
 	 * Plugin instance.
@@ -101,15 +104,6 @@ class Rest_API {
 			]
 		);
 
-		register_rest_route(
-			self::NAMESPACE,
-			'/test',
-			[
-				'methods'             => 'POST',
-				'callback'            => [$this, 'run_test'],
-				'permission_callback' => [$this, 'check_permissions'],
-			]
-		);
 	}
 
 	/**
@@ -126,11 +120,13 @@ class Rest_API {
 	 */
 	public function check_permissions(\WP_REST_Request $request) {
 
-		// Method 1: Check for CLI auth token (shared-secret via transient).
+		// Method 1: Check for CLI auth token (shared-secret via file).
+		// Using a file instead of transients avoids issues with object caching
+		// plugins that don't share cache between CLI and web contexts.
 		$token = $request->get_header('X-OPcache-Preload-Token');
 
 		if (! empty($token)) {
-			$stored_token = get_site_transient(self::AUTH_TRANSIENT_KEY);
+			$stored_token = $this->get_auth_token_from_file();
 
 			if (! empty($stored_token) && hash_equals($stored_token, $token)) {
 				return true;
@@ -155,6 +151,42 @@ class Rest_API {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Get auth token from file.
+	 *
+	 * Reads the token from a file, validating that it's not expired.
+	 *
+	 * @return string|null Token or null if not found/expired.
+	 */
+	private function get_auth_token_from_file(): ?string {
+
+		$file = self::AUTH_TOKEN_FILE;
+
+		if (! file_exists($file)) {
+			return null;
+		}
+
+		$data = @file_get_contents($file);
+
+		if (false === $data) {
+			return null;
+		}
+
+		$data = @json_decode($data, true);
+
+		if (! is_array($data) || ! isset($data['token'], $data['expires'])) {
+			return null;
+		}
+
+		// Check expiration.
+		if ($data['expires'] < time()) {
+			@unlink($file);
+			return null;
+		}
+
+		return $data['token'];
 	}
 
 	/**
@@ -334,34 +366,4 @@ class Rest_API {
 		);
 	}
 
-	/**
-	 * Run a preload test via HTTP.
-	 *
-	 * This endpoint is called by WP-CLI after regenerating the preload file.
-	 * It loads WordPress with the preload file active and checks for errors.
-	 * The actual test is done by the Preload_Tester which makes a separate
-	 * HTTP request to the test file.
-	 *
-	 * @param \WP_REST_Request $request Request object.
-	 * @return \WP_REST_Response
-	 */
-	public function run_test(\WP_REST_Request $request): \WP_REST_Response {
-
-		$state = $this->plugin->auto_optimizer->get_state();
-		$token = $state['test_token'] ?? '';
-
-		if (empty($token)) {
-			return new \WP_REST_Response(
-				[
-					'success' => false,
-					'error'   => 'No test token found. Start optimization first.',
-				],
-				400
-			);
-		}
-
-		$result = $this->plugin->preload_tester->run_test($token);
-
-		return new \WP_REST_Response($result);
 	}
-}

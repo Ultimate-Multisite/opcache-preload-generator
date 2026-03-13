@@ -13,6 +13,39 @@
 	margin-top: 20px;
 }
 
+/* Main Content Sections */
+.opcache-main-content {
+	margin-top: 30px;
+}
+
+.opcache-section {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-section h2 {
+	margin-top: 0;
+	margin-bottom: 20px;
+	font-size: 1.3em;
+}
+
+.opcache-help-link {
+	background: #f6f7f7;
+	border-color: #c3c4c7;
+}
+
+.opcache-help-link p {
+	margin: 0;
+	color: #646970;
+}
+
+.opcache-help-link a {
+	text-decoration: none;
+}
+
 /* Cards */
 .opcache-cards {
 	display: grid;
@@ -552,6 +585,313 @@
 	font-weight: bold;
 }
 
+/* Threshold Slider */
+.opcache-threshold-section {
+	background: #f0f9f1;
+	border-color: #00a32a;
+}
+
+.opcache-threshold-section h2 {
+	color: #1d2327;
+}
+
+.opcache-slider-container {
+	margin: 20px 0;
+}
+
+.opcache-slider-labels {
+	display: flex;
+	justify-content: space-between;
+	margin-bottom: 10px;
+	color: #646970;
+	font-size: 13px;
+}
+
+.opcache-slider-wrapper {
+	position: relative;
+	padding: 10px 0;
+}
+
+#opcache-threshold-slider {
+	width: 100%;
+	height: 8px;
+	-webkit-appearance: none;
+	appearance: none;
+	background: #dcdcde;
+	border-radius: 4px;
+	outline: none;
+}
+
+#opcache-threshold-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 24px;
+	height: 24px;
+	background: #2271b1;
+	border-radius: 50%;
+	cursor: pointer;
+	border: 2px solid #fff;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+#opcache-threshold-slider::-moz-range-thumb {
+	width: 24px;
+	height: 24px;
+	background: #2271b1;
+	border-radius: 50%;
+	cursor: pointer;
+	border: 2px solid #fff;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.opcache-threshold-value {
+	font-size: 18px;
+	font-weight: 600;
+	color: #2271b1;
+	text-align: center;
+	margin: 15px 0;
+}
+
+.opcache-threshold-description {
+	color: #646970;
+	font-size: 13px;
+	margin-top: 10px;
+}
+
+/* Candidate Preview */
+.opcache-candidates-section {
+	background: #fff;
+}
+
+.opcache-candidate-stats {
+	background: #f6f7f7;
+	border-radius: 4px;
+	padding: 15px;
+	margin: 15px 0;
+}
+
+.opcache-candidate-count {
+	font-size: 24px;
+	font-weight: 600;
+	color: #1d2327;
+}
+
+.opcache-candidate-count-label {
+	color: #646970;
+	font-size: 14px;
+}
+
+.opcache-cutoff-info {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid #c3c4c7;
+	color: #646970;
+	font-size: 13px;
+}
+
+.opcache-candidates-table {
+	width: 100%;
+	margin-top: 15px;
+}
+
+.opcache-candidates-table th {
+	text-align: left;
+	padding: 8px;
+	background: #f6f7f7;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.opcache-candidates-table td {
+	padding: 8px;
+	border-bottom: 1px solid #f0f0f1;
+	font-size: 13px;
+}
+
+.opcache-candidates-table code {
+	background: #f6f7f7;
+	padding: 2px 6px;
+	border-radius: 3px;
+	font-size: 12px;
+}
+
+.opcache-candidates-loading {
+	text-align: center;
+	padding: 20px;
+	color: #646970;
+}
+
+/* Context-aware actions */
+.opcache-action-primary {
+	background: #2271b1;
+	color: #fff;
+	border-color: #2271b1;
+}
+
+.opcache-action-primary h2 {
+	color: #fff;
+}
+
+.opcache-action-primary .opcache-stat-large {
+	color: #fff;
+}
+
+.opcache-action-primary .opcache-stat-label {
+	color: rgba(255,255,255,0.8);
+}
+
+.opcache-phpini-prominent {
+	background: #fcf9e8;
+	border: 2px solid #f0c33c;
+}
+
+.opcache-phpini-prominent h2 {
+	color: #996800;
+}
+
+.opcache-status-active {
+	background: #f0f9f1;
+	border-color: #00a32a;
+}
+
+.opcache-status-active h3 {
+	color: #006908;
+}
+
+.opcache-regenerate-section {
+	background: #e5f5fa;
+	border-color: #72aee6;
+}
+
+.opcache-regenerate-section h2 {
+	color: #0a4b78;
+}
+
+/* Steps Section */
+.opcache-steps-section {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.opcache-steps-vertical {
+	display: flex;
+	flex-direction: row;
+	justify-content: space-between;
+	position: relative;
+}
+
+/* Horizontal line connecting steps */
+.opcache-steps-vertical::before {
+	content: '';
+	position: absolute;
+	top: 14px;
+	left: 40px;
+	right: 40px;
+	height: 3px;
+	background: #dcdcde;
+	z-index: 0;
+}
+
+.opcache-step {
+	flex: 1;
+	text-align: center;
+	position: relative;
+	z-index: 1;
+	opacity: 0.5;
+	transition: opacity 0.2s;
+	max-width: 200px;
+}
+
+.opcache-step.active {
+	opacity: 1;
+}
+
+.opcache-step.completed {
+	opacity: 0.8;
+}
+
+.opcache-step-header {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	margin-bottom: 8px;
+}
+
+.opcache-step-number {
+	width: 32px;
+	height: 32px;
+	background: #dcdcde;
+	color: #1d2327;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 600;
+	font-size: 14px;
+	margin-bottom: 8px;
+	border: 3px solid #fff;
+	box-shadow: 0 0 0 2px #dcdcde;
+}
+
+.opcache-step.active .opcache-step-number {
+	background: #2271b1;
+	color: #fff;
+	box-shadow: 0 0 0 2px #2271b1;
+}
+
+.opcache-step.completed .opcache-step-number {
+	background: #00a32a;
+	color: #fff;
+	box-shadow: 0 0 0 2px #00a32a;
+}
+
+.opcache-step-title {
+	font-weight: 600;
+	font-size: 13px;
+	color: #1d2327;
+}
+
+.opcache-step-body p {
+	margin: 0;
+	color: #646970;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+/* Advanced Toggle */
+.opcache-advanced-toggle {
+	background: #f6f7f7;
+	border-color: #c3c4c7;
+	text-align: center;
+	padding: 15px;
+}
+
+.opcache-advanced-toggle .button {
+	background: transparent;
+	border: none;
+	color: #646970;
+	font-size: 13px;
+	padding: 5px 15px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.opcache-advanced-toggle .button:hover {
+	background: #f0f0f1;
+	color: #1d2327;
+}
+
+.opcache-advanced-toggle .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	line-height: 16px;
+}
+
 .opcache-optimize-failed {
 	background: #fcf0f1;
 	border: 1px solid #d63638;
@@ -563,6 +903,21 @@
 .opcache-optimize-failed h3 {
 	margin-top: 0;
 	color: #8a2424;
+}
+
+/* Advanced Users Warning */
+.opcache-preload-wrap > .notice-warning {
+	border-left-color: #dba617;
+	background: #fcf9e8;
+}
+
+.opcache-preload-wrap > .notice-warning p {
+	font-size: 13px;
+	margin: 0.5em 0;
+}
+
+.opcache-preload-wrap > .notice-warning p:first-child {
+	font-size: 14px;
 }
 
 /* Responsive */

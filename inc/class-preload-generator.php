@@ -162,8 +162,6 @@ class Preload_Generator {
 		foreach ($sorted_paths as $path) {
 			$unresolved = $this->dependency_resolver->get_unresolved_dependencies($path, $sorted_paths);
 			$deps = $this->dependency_resolver->get_file_dependencies($path);
-			$deps[] = $path;
-
 
 			if (! empty($unresolved)) {
 				$this->skipped_files[] = [
@@ -176,9 +174,18 @@ class Preload_Generator {
 			// Use require_once only when safe: no side effects AND all deps resolved.
 			if (empty($unresolved)) {
 				$method = 'require_once';
-				foreach ($deps as $dep_path) { // AND all deps have no side effects.
-					if ($this->safety_analyzer->get_recommended_method($dep_path) !== 'require_once') {
+				// Check the file itself and all its dependencies for side effects.
+				$files_to_check = [$path];
+				foreach ($deps as $dep_class) {
+					$dep_file = $this->dependency_resolver->get_class_file($dep_class);
+					if ($dep_file) {
+						$files_to_check[] = $dep_file;
+					}
+				}
+				foreach ($files_to_check as $check_path) {
+					if ($this->safety_analyzer->get_recommended_method($check_path) !== 'require_once') {
 						$method = 'opcache_compile_file';
+						break;
 					}
 				}
 			} else {

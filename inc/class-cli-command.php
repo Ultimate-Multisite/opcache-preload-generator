@@ -19,27 +19,18 @@ if (! defined('ABSPATH')) {
 }
 
 /**
- * Manage OPcache preload file generation and optimization.
+ * Generate OPcache preload files from runtime statistics.
  *
  * ## EXAMPLES
  *
- *     # Auto-detect and optimize preload files
- *     wp opcache-preload optimize
+ *     # Generate preload.php from high-hit OPcache files
+ *     wp opcache-preload generate
  *
- *     # Test a specific file as a preload candidate
- *     wp opcache-preload test-file /path/to/file.php
- *
- *     # Show current preload status
+ *     # Show current status
  *     wp opcache-preload status
  *
  *     # List candidate files from OPcache
  *     wp opcache-preload candidates
- *
- *     # Generate the preload.php file from current file list
- *     wp opcache-preload generate
- *
- *     # Reset optimization state
- *     wp opcache-preload reset
  */
 class CLI_Command extends \WP_CLI_Command {
 
@@ -59,22 +50,23 @@ class CLI_Command extends \WP_CLI_Command {
 	}
 
 	/**
-	 * Run the auto-optimizer.
+	 * Generate preload.php from high-hit OPcache files.
 	 *
 	 * Fetches OPcache stats from the web server, identifies high-hit files,
-	 * and tests each one by adding it to the preload file and verifying the
-	 * site still works. Files that cause errors are automatically removed.
+	 * and generates a preload.php file. Uses the dependency resolver and
+	 * safety analyzer to automatically determine the best include method
+	 * for each file.
 	 *
 	 * With --max=auto (default), uses a reference WordPress core file to
 	 * determine a hit threshold. Only files with hits above the threshold
-	 * are tested. The --threshold option controls how aggressive this is:
+	 * are included. The --threshold option controls how aggressive this is:
 	 * 0.7 (default) = files with 70% of the reference file's hits,
 	 * 0.1 = files with 10% (more files), 0.01 = nearly everything.
 	 *
 	 * ## OPTIONS
 	 *
 	 * [--max=<number>]
-	 * : Maximum number of candidate files to test. Use 'auto' for automatic
+	 * : Maximum number of files to include. Use 'auto' for automatic
 	 *   detection based on hit distribution.
 	 * ---
 	 * default: auto
@@ -88,47 +80,33 @@ class CLI_Command extends \WP_CLI_Command {
 	 * default: 0.7
 	 * ---
 	 *
-	 * [--delay=<ms>]
-	 * : Delay in milliseconds between testing each file.
-	 * ---
-	 * default: 500
-	 * ---
-	 *
-	 * [--baseline-runs=<number>]
-	 * : Number of baseline test runs to average.
-	 * ---
-	 * default: 3
-	 * ---
-	 *
 	 * [--yes]
 	 * : Skip confirmation prompt.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     # Auto-detect with default 70% threshold (~20 files)
-	 *     wp opcache-preload optimize
+	 *     wp opcache-preload generate
 	 *
 	 *     # Lower threshold to include more files (~500 files)
-	 *     wp opcache-preload optimize --threshold=0.1
+	 *     wp opcache-preload generate --threshold=0.1
 	 *
 	 *     # Very low threshold for comprehensive optimization
-	 *     wp opcache-preload optimize --threshold=0.01
+	 *     wp opcache-preload generate --threshold=0.01
 	 *
 	 *     # Fixed number of top files by hits
-	 *     wp opcache-preload optimize --max=200
+	 *     wp opcache-preload generate --max=200
 	 *
 	 * @param array $args       Positional arguments.
 	 * @param array $assoc_args Associative arguments.
 	 * @return void
 	 */
-	public function optimize(array $args, array $assoc_args): void {
+	public function generate(array $args, array $assoc_args): void {
 
-		$max_files     = $assoc_args['max'] ?? 'auto';
-		$threshold     = (float) ($assoc_args['threshold'] ?? 0.7);
-		$delay_ms      = (int) ($assoc_args['delay'] ?? 500);
-		$baseline_runs = (int) ($assoc_args['baseline-runs'] ?? 3);
+		$max_files = $assoc_args['max'] ?? 'auto';
+		$threshold = (float) ($assoc_args['threshold'] ?? 0.7);
 
-		\WP_CLI::log('OPcache Preload Optimizer');
+		\WP_CLI::log('OPcache Preload Generator');
 		\WP_CLI::log('========================');
 		\WP_CLI::log('');
 
@@ -141,7 +119,7 @@ class CLI_Command extends \WP_CLI_Command {
 				'mode'        => 'auto' === $max_files ? 'auto' : 'all',
 				'max'         => is_numeric($max_files) ? (int) $max_files : 5000,
 				'threshold'   => $threshold,
-				'skip_safety' => 1, // Skip static analysis — the optimizer does runtime testing.
+				'skip_safety' => 1, // Skip static analysis - use dependency resolver instead.
 			]
 		);
 
@@ -185,19 +163,14 @@ class CLI_Command extends \WP_CLI_Command {
 		\WP_CLI::log('');
 
 		if (! isset($assoc_args['yes'])) {
-			\WP_CLI::confirm(sprintf('Test %d files for preloading?', $total));
+			\WP_CLI::confirm(sprintf('Generate preload file with %d files?', $total));
 		}
 
-		$files_config = $candidates;
-		$files_config = array_map(fn($e) => $e['file'], $files_config);
-		$this->plugin->save_preload_files($files_config);
-		$files_config = $this->plugin->get_preload_files_config();
-		$settings     = $this->plugin->get_settings();
+		// Convert candidates to file config.
+		$files_config = array_map(fn($e) => ['path' => $e['file'], 'method' => 'opcache_compile_file'], $candidates);
+		$settings = $this->plugin->get_settings();
 
-		if (empty($files_config)) {
-			\WP_CLI::error('No files in preload list. Run "wp opcache-preload optimize" first.');
-		}
-
+		// Generate the preload file.
 		$result = $this->regenerate_preload_file($files_config);
 
 		if (true !== $result) {
@@ -217,331 +190,10 @@ class CLI_Command extends \WP_CLI_Command {
 		if (! empty($skipped)) {
 			\WP_CLI::log(sprintf('%d files skipped due to dependency issues.', count($skipped)));
 		}
-		RETURN  ;
 
-		// Step 2: Set up test infrastructure.
-		\WP_CLI::log('Setting up test infrastructure...');
-
-		$settings = $this->plugin->get_settings();
-		$tester   = $this->plugin->preload_tester;
-
-		// Generate test token and file.
-		$token  = $tester->generate_test_token();
-		$result = $tester->generate_test_file($settings['output_path']);
-
-		if (true !== $result) {
-			\WP_CLI::error('Failed to generate test file: ' . $result);
-		}
-
-		// Write token file.
-		$token_file = ABSPATH . '.opcache_test_token';
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		file_put_contents($token_file, $token);
-
-		// Save state so the REST endpoint can find the token.
-		$state = [
-			'status'           => 'running',
-			'phase'            => 'baseline',
-			'test_token'       => $token,
-			'baseline_time'    => 0,
-			'current_time'     => 0,
-			'best_time'        => 0,
-			'files_tested'     => 0,
-			'files_added'      => 0,
-			'files_failed'     => 0,
-			'failed_files'     => [],
-			'candidate_files'  => $candidates,
-			'total_candidates' => $total,
-			'current_file'     => '',
-			'time_saved_ms'    => 0,
-			'time_saved_pct'   => 0,
-			'last_error'       => '',
-			'started_at'       => time(),
-			'updated_at'       => time(),
-			'test_results'     => [],
-			'original_files'   => $this->plugin->get_preload_files(),
-		];
-		$this->plugin->auto_optimizer->save_state($state);
-
-		// Step 3: Run baseline test.
-		\WP_CLI::log('Running baseline test...');
-
-		// Clear preload files for baseline.
-		$this->plugin->save_preload_files([]);
-		$this->regenerate_preload_file([]);
-
-		$baseline_times = [];
-		for ($i = 0; $i < $baseline_runs; $i++) {
-			if ($i > 0) {
-				usleep($delay_ms * 1000);
-			}
-
-			$test_result = $tester->run_test($token);
-
-			if (! $test_result['success']) {
-				$this->cleanup($tester, $token_file);
-				\WP_CLI::error('Baseline test failed: ' . ($test_result['error'] ?? 'Unknown error'));
-			}
-
-			$baseline_times[] = $test_result['time_ms'];
-			\WP_CLI::log(sprintf('  Run %d: %.2f ms', $i + 1, $test_result['time_ms']));
-		}
-
-		$baseline_time = round(array_sum($baseline_times) / count($baseline_times), 2);
-		\WP_CLI::log(sprintf('Baseline: %.2f ms (average of %d runs)', $baseline_time, $baseline_runs));
-		\WP_CLI::log('');
-
-		// Step 4: Test each candidate file.
-		\WP_CLI::log('Testing candidate files...');
-		\WP_CLI::log('');
-
-		$files_added  = 0;
-		$files_failed = 0;
-		$best_time    = $baseline_time;
-		$failed_files = [];
-		$progress     = \WP_CLI\Utils\make_progress_bar('Optimizing', $total);
-
-		foreach ($candidates as $index => $candidate) {
-			$file_path = $candidate['file'];
-			$relative  = $this->get_relative_path($file_path);
-
-			// Add file to preload list. The generator determines the preload
-			// method per-file (require_once vs opcache_compile_file) based on
-			// dependency resolution and static analysis.
-			$files_config   = $this->plugin->get_preload_files_config();
-			$files_config[] = [
-				'path' => $file_path,
-			];
-			$this->plugin->save_preload_files($files_config);
-			$this->regenerate_preload_file($files_config);
-
-			// Small delay to let things settle.
-			usleep($delay_ms * 1000);
-
-			// Test that the site still works with this file in the preload list.
-			$test_result = $tester->run_test($token);
-
-			if ($test_result['success']) {
-				++$files_added;
-
-				if ($test_result['time_ms'] < $best_time) {
-					$best_time = $test_result['time_ms'];
-				}
-
-				\WP_CLI::log(
-					sprintf(
-						'  + %s (%.2f ms)',
-						$relative,
-						$test_result['time_ms']
-					)
-				);
-			} else {
-				// File caused a test failure — remove it.
-				$this->remove_file_from_config($file_path);
-				$this->regenerate_preload_file($this->plugin->get_preload_files_config());
-
-				++$files_failed;
-				$error_msg      = $test_result['error'] ?? 'Unknown error';
-				$failed_files[] = [
-					'file'  => $file_path,
-					'error' => $error_msg,
-				];
-
-				\WP_CLI::log(
-					sprintf(
-						'  x %s FAILED: %s',
-						$relative,
-						substr($error_msg, 0, 120)
-					)
-				);
-			}
-
-			$progress->tick();
-		}
-
-		$progress->finish();
-
-		// Step 5: Final regeneration and cleanup.
-		\WP_CLI::log('');
-		\WP_CLI::log('Generating final preload file...');
-
-		$files_config = $this->plugin->get_preload_files_config();
-		$this->regenerate_preload_file($files_config);
-
-		$this->cleanup($tester, $token_file);
-		$this->delete_auth_token();
-
-		// Update state to completed.
-		$time_saved_ms  = round($baseline_time - $best_time, 2);
-		$time_saved_pct = $baseline_time > 0 ? round(($time_saved_ms / $baseline_time) * 100, 1) : 0;
-
-		$state['status']         = 'completed';
-		$state['phase']          = 'complete';
-		$state['files_added']    = $files_added;
-		$state['files_failed']   = $files_failed;
-		$state['failed_files']   = $failed_files;
-		$state['baseline_time']  = $baseline_time;
-		$state['best_time']      = $best_time;
-		$state['time_saved_ms']  = $time_saved_ms;
-		$state['time_saved_pct'] = $time_saved_pct;
-		$this->plugin->auto_optimizer->save_state($state);
-
-		// Summary.
-		\WP_CLI::log('');
-		\WP_CLI::success('Optimization complete!');
-		\WP_CLI::log('');
-		\WP_CLI::log(sprintf('  Files added:   %d', $files_added));
-		\WP_CLI::log(sprintf('  Files failed:  %d', $files_failed));
-		\WP_CLI::log(sprintf('  Baseline:      %.2f ms', $baseline_time));
-		\WP_CLI::log(sprintf('  Best time:     %.2f ms', $best_time));
-		\WP_CLI::log(sprintf('  Time saved:    %.2f ms (%.1f%%)', $time_saved_ms, $time_saved_pct));
-		\WP_CLI::log(sprintf('  Preload file:  %s', $settings['output_path']));
 		\WP_CLI::log('');
 		\WP_CLI::log('To activate preloading, add to your php.ini:');
 		\WP_CLI::log($this->plugin->preload_generator->get_php_ini_config($settings['output_path']));
-	}
-
-	/**
-	 * Test a specific file as a preload candidate.
-	 *
-	 * Adds the file to the preload list, regenerates preload.php, and runs
-	 * a test to see if the site still works. If it fails, the file is removed.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <file>
-	 * : Path to the PHP file to test.
-	 *
-	 * [--method=<method>]
-	 * : Include method to use.
-	 * ---
-	 * default: opcache_compile_file
-	 * options:
-	 *   - opcache_compile_file
-	 *   - require_once
-	 * ---
-	 *
-	 * [--keep]
-	 * : Keep the file in the preload list even if the test fails.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp opcache-preload test-file /path/to/file.php
-	 *     wp opcache-preload test-file /path/to/file.php --method=opcache_compile_file
-	 *
-	 * @subcommand test-file
-	 *
-	 * @param array $args       Positional arguments.
-	 * @param array $assoc_args Associative arguments.
-	 * @return void
-	 */
-	public function test_file(array $args, array $assoc_args): void {
-
-		$file_path = $args[0];
-		$method    = $assoc_args['method'] ?? 'opcache_compile_file';
-		$keep      = isset($assoc_args['keep']);
-
-		// Validate file.
-		if (! file_exists($file_path)) {
-			// Try as relative to ABSPATH.
-			$abs_path = ABSPATH . ltrim($file_path, '/');
-			if (file_exists($abs_path)) {
-				$file_path = $abs_path;
-			} else {
-				\WP_CLI::error("File not found: $file_path");
-			}
-		}
-
-		$file_path = realpath($file_path);
-
-		// Safety analysis.
-		$analysis = $this->plugin->safety_analyzer->analyze_file($file_path);
-
-		if (! $analysis['safe']) {
-			\WP_CLI::warning('Safety analysis flagged this file:');
-			foreach ($analysis['errors'] as $error) {
-				\WP_CLI::log("  Error: $error");
-			}
-			\WP_CLI::log('');
-			\WP_CLI::confirm('Continue testing anyway?');
-		}
-
-		if (! empty($analysis['warnings'])) {
-			\WP_CLI::log('Warnings:');
-			foreach ($analysis['warnings'] as $warning) {
-				\WP_CLI::log("  - $warning");
-			}
-			\WP_CLI::log('');
-		}
-
-		// Set up test infrastructure.
-		$settings = $this->plugin->get_settings();
-		$tester   = $this->plugin->preload_tester;
-		$token    = $tester->generate_test_token();
-
-		$result = $tester->generate_test_file($settings['output_path']);
-		if (true !== $result) {
-			\WP_CLI::error('Failed to generate test file: ' . $result);
-		}
-
-		$token_file = ABSPATH . '.opcache_test_token';
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		file_put_contents($token_file, $token);
-
-		// Save minimal state for the test endpoint.
-		$state               = $this->plugin->auto_optimizer->get_state();
-		$state['test_token'] = $token;
-		$this->plugin->auto_optimizer->save_state($state);
-
-		// Add file and test.
-		$files_config = $this->plugin->get_preload_files_config();
-		$was_in_list  = false;
-
-		foreach ($files_config as $existing) {
-			if ($existing['path'] === $file_path) {
-				$was_in_list = true;
-				break;
-			}
-		}
-
-		if (! $was_in_list) {
-			$files_config[] = [
-				'path'   => $file_path,
-				'method' => $method,
-			];
-			$this->plugin->save_preload_files($files_config);
-		}
-
-		$this->regenerate_preload_file($files_config);
-
-		\WP_CLI::log(sprintf('Testing %s with %s...', $this->get_relative_path($file_path), $method));
-
-		usleep(500000); // 500ms settle time.
-		$test_result = $tester->run_test($token);
-
-		// Cleanup test infrastructure.
-		$this->cleanup($tester, $token_file);
-
-		if ($test_result['success']) {
-			\WP_CLI::success(
-				sprintf(
-					'File works! Time: %.2f ms',
-					$test_result['time_ms']
-				)
-			);
-
-			// Regenerate without test file.
-			$this->regenerate_preload_file($this->plugin->get_preload_files_config());
-		} else {
-			$error = $test_result['error'] ?? 'Unknown error';
-			\WP_CLI::warning("Test failed: $error");
-
-			if (! $keep && ! $was_in_list) {
-				$this->remove_file_from_config($file_path);
-				$this->regenerate_preload_file($this->plugin->get_preload_files_config());
-				\WP_CLI::log('File removed from preload list.');
-			}
-		}
 	}
 
 	/**
@@ -557,34 +209,15 @@ class CLI_Command extends \WP_CLI_Command {
 	 */
 	public function status(array $args, array $assoc_args): void {
 
-		$settings     = $this->plugin->get_settings();
-		$files        = $this->plugin->get_preload_files();
-		$files_config = $this->plugin->get_preload_files_config();
-		$state        = $this->plugin->auto_optimizer->get_state();
+		$settings = $this->plugin->get_settings();
 
 		\WP_CLI::log('OPcache Preload Status');
 		\WP_CLI::log('======================');
 		\WP_CLI::log('');
 		\WP_CLI::log(sprintf('Output path:     %s', $settings['output_path']));
 		\WP_CLI::log(sprintf('File exists:     %s', file_exists($settings['output_path']) ? 'Yes' : 'No'));
-		\WP_CLI::log(sprintf('Files in list:   %d', count($files)));
 		\WP_CLI::log(sprintf('Method:          auto (require_once for pure declarations, opcache_compile_file for rest)'));
 		\WP_CLI::log('');
-
-		// Optimizer state.
-		if ('idle' !== $state['status']) {
-			\WP_CLI::log('Optimizer State');
-			\WP_CLI::log('---------------');
-			\WP_CLI::log(sprintf('Status:          %s', $state['status']));
-			\WP_CLI::log(sprintf('Phase:           %s', $state['phase']));
-			\WP_CLI::log(sprintf('Files tested:    %d', $state['files_tested']));
-			\WP_CLI::log(sprintf('Files added:     %d', $state['files_added']));
-			\WP_CLI::log(sprintf('Files failed:    %d', $state['files_failed']));
-			\WP_CLI::log(sprintf('Baseline:        %.2f ms', $state['baseline_time']));
-			\WP_CLI::log(sprintf('Best time:       %.2f ms', $state['best_time']));
-			\WP_CLI::log(sprintf('Time saved:      %.2f ms (%.1f%%)', $state['time_saved_ms'], $state['time_saved_pct']));
-			\WP_CLI::log('');
-		}
 
 		// Try to get OPcache info from web server.
 		$opcache_response = $this->api_get('opcache-status');
@@ -722,74 +355,6 @@ class CLI_Command extends \WP_CLI_Command {
 	}
 
 	/**
-	 * Generate the preload.php file from the current file list.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp opcache-preload generate
-	 *
-	 * @param array $args       Positional arguments.
-	 * @param array $assoc_args Associative arguments.
-	 * @return void
-	 */
-	public function generate(array $args, array $assoc_args): void {
-
-		$files_config = $this->plugin->get_preload_files_config();
-		$settings     = $this->plugin->get_settings();
-
-		if (empty($files_config)) {
-			\WP_CLI::error('No files in preload list. Run "wp opcache-preload optimize" first.');
-		}
-
-		$result = $this->regenerate_preload_file($files_config);
-
-		if (true !== $result) {
-			\WP_CLI::error('Failed to generate preload file: ' . $result);
-		}
-
-		$skipped = $this->plugin->preload_generator->get_skipped_files();
-
-		\WP_CLI::success(
-			sprintf(
-				'Preload file generated: %s (%d files)',
-				$settings['output_path'],
-				count($files_config) - count($skipped)
-			)
-		);
-
-		if (! empty($skipped)) {
-			\WP_CLI::log(sprintf('%d files skipped due to dependency issues.', count($skipped)));
-		}
-	}
-
-	/**
-	 * Reset the optimization state.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp opcache-preload reset
-	 *
-	 * @param array $args       Positional arguments.
-	 * @param array $assoc_args Associative arguments.
-	 * @return void
-	 */
-	public function reset(array $args, array $assoc_args): void {
-
-		$this->plugin->auto_optimizer->reset_state();
-
-		// Clean up test file and token.
-		$this->plugin->preload_tester->delete_test_file();
-
-		$token_file = ABSPATH . '.opcache_test_token';
-		if (file_exists($token_file)) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-			unlink($token_file);
-		}
-
-		\WP_CLI::success('Optimization state reset.');
-	}
-
-	/**
 	 * Make a GET request to the plugin's REST API.
 	 *
 	 * Uses wp_remote_get to hit the site's own REST API, which runs in the
@@ -861,26 +426,40 @@ class CLI_Command extends \WP_CLI_Command {
 	/**
 	 * Get or create a short-lived auth token for CLI-to-REST communication.
 	 *
-	 * The token is stored as a transient with a 5-minute TTL. If a valid token
-	 * already exists, it is reused (so multiple API calls in one optimize run
-	 * share the same token).
+	 * The token is stored in a file with a 5-minute TTL. Using a file instead
+	 * of transients avoids issues with object caching plugins (e.g., Docket Cache)
+	 * that don't share cache between CLI and web contexts.
 	 *
 	 * @return string The auth token.
 	 */
 	private function get_or_create_auth_token(): string {
 
-		$transient_key = Rest_API::AUTH_TRANSIENT_KEY;
-		$existing      = get_site_transient($transient_key);
+		$token_file = Rest_API::AUTH_TOKEN_FILE;
 
-		if (! empty($existing)) {
-			return $existing;
+		// Check for existing valid token.
+		if (file_exists($token_file)) {
+			$data = @file_get_contents($token_file);
+			if (false !== $data) {
+				$data = @json_decode($data, true);
+				if (is_array($data) && isset($data['token'], $data['expires']) && $data['expires'] > time()) {
+					return $data['token'];
+				}
+			}
 		}
 
 		// Generate a cryptographically secure random token.
 		$token = wp_generate_password(64, false);
 
-		// Store with 5-minute TTL. Uses site transient for multisite compat.
-		set_site_transient($transient_key, $token, 5 * MINUTE_IN_SECONDS);
+		// Store with 5-minute TTL.
+		$data = [
+			'token'   => $token,
+			'expires' => time() + (5 * MINUTE_IN_SECONDS),
+		];
+
+		// Write to file with restricted permissions.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		@file_put_contents($token_file, json_encode($data));
+		@chmod($token_file, 0600);
 
 		return $token;
 	}
@@ -892,7 +471,12 @@ class CLI_Command extends \WP_CLI_Command {
 	 */
 	private function delete_auth_token(): void {
 
-		delete_site_transient(Rest_API::AUTH_TRANSIENT_KEY);
+		$token_file = Rest_API::AUTH_TOKEN_FILE;
+
+		if (file_exists($token_file)) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			@unlink($token_file);
+		}
 	}
 
 	/**
@@ -909,51 +493,11 @@ class CLI_Command extends \WP_CLI_Command {
 			$files_config,
 			$settings['output_path'],
 			[
-				'use_require'    => $settings['use_require'],
 				'validate_files' => true,
 				'output_path'    => $settings['output_path'],
 				'abspath'        => ABSPATH,
 			]
 		);
-	}
-
-	/**
-	 * Remove a file from the preload config.
-	 *
-	 * @param string $file_path File path to remove.
-	 * @return void
-	 */
-	private function remove_file_from_config(string $file_path): void {
-
-		$files_config = $this->plugin->get_preload_files_config();
-
-		$files_config = array_filter(
-			$files_config,
-			function ($file) use ($file_path) {
-				return $file['path'] !== $file_path;
-			}
-		);
-
-		$this->plugin->save_preload_files(array_values($files_config));
-	}
-
-	/**
-	 * Clean up test infrastructure.
-	 *
-	 * @param Preload_Tester $tester     Tester instance.
-	 * @param string         $token_file Token file path.
-	 * @return void
-	 */
-	private function cleanup(Preload_Tester $tester, string $token_file): void {
-
-		$tester->delete_test_file();
-
-		if (file_exists($token_file)) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-			unlink($token_file);
-		}
-
-		delete_transient('opcache_test_token');
 	}
 
 	/**
@@ -1000,5 +544,216 @@ class CLI_Command extends \WP_CLI_Command {
 		}
 
 		return $bytes . ' B';
+	}
+
+	/**
+	 * Debug why a file is using opcache_compile_file instead of require_once.
+	 *
+	 * Analyzes the file and its dependencies to find which dependency has side
+	 * effects, causing the file to be excluded from require_once.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <file>
+	 * : Path to the PHP file to analyze.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Debug a specific file
+	 *     wp opcache-preload debug-file /path/to/file.php
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 * @return void
+	 */
+	public function debug_file(array $args, array $assoc_args): void {
+
+		$file_path = $args[0] ?? '';
+
+		if (empty($file_path)) {
+			\WP_CLI::error('Please provide a file path.');
+			return;
+		}
+
+		// Resolve relative paths.
+		if (!file_exists($file_path)) {
+			$abs_path = ABSPATH . ltrim($file_path, '/');
+			if (file_exists($abs_path)) {
+				$file_path = $abs_path;
+			} else {
+				\WP_CLI::error("File not found: $file_path");
+				return;
+			}
+		}
+
+		$file_path = realpath($file_path);
+
+		if (!is_readable($file_path)) {
+			\WP_CLI::error("File is not readable: $file_path");
+			return;
+		}
+
+		\WP_CLI::log('');
+		\WP_CLI::log('Debug File Analysis');
+		\WP_CLI::log('==================');
+		\WP_CLI::log('');
+		\WP_CLI::log('File: ' . $this->get_relative_path($file_path));
+		\WP_CLI::log('Full path: ' . $file_path);
+		\WP_CLI::log('');
+
+		$safety_analyzer = $this->plugin->safety_analyzer;
+		$dependency_resolver = $this->plugin->dependency_resolver;
+
+		// Check recommended method for this file.
+		$method = $safety_analyzer->get_recommended_method($file_path);
+		\WP_CLI::log('File safety check:');
+		\WP_CLI::log('  Recommended method: ' . $method);
+
+		if ($method !== 'require_once') {
+			\WP_CLI::log('');
+			\WP_CLI::log('This file has side effects and must use opcache_compile_file');
+			\WP_CLI::log('');
+
+			// Parse and show why.
+			$content = file_get_contents($file_path);
+			\WP_CLI::log('Token analysis (first 20 tokens):');
+			$tokens = token_get_all($content);
+			for ($i = 0; $i < min(20, count($tokens)); $i++) {
+				$token = $tokens[$i];
+				if (is_array($token)) {
+					$token_name = token_name($token[0]);
+					$token_text = str_replace(["\n", "\r"], ['\n', '\r'], substr($token[1], 0, 40));
+					\WP_CLI::log(sprintf('  [%2d] %s: "%s"', $i, $token_name, $token_text));
+				}
+			}
+			return;
+		}
+
+		// Parse the file to get dependencies.
+		$data = $dependency_resolver->parse_file($file_path);
+		\WP_CLI::log('');
+		\WP_CLI::log('Classes defined in file:');
+		if (empty($data['classes'])) {
+			\WP_CLI::log('  (none)');
+		} else {
+			foreach ($data['classes'] as $class) {
+				\WP_CLI::log('  - ' . $class);
+			}
+		}
+
+		\WP_CLI::log('');
+		\WP_CLI::log('Direct dependencies (extends/implements/use):');
+		if (empty($data['dependencies'])) {
+			\WP_CLI::log('  (none)');
+		} else {
+			foreach ($data['dependencies'] as $dep) {
+				\WP_CLI::log('  - ' . $dep);
+			}
+		}
+
+		// Build class map from OPcache files (or filesystem fallback).
+		\WP_CLI::log('');
+		\WP_CLI::log('Building class map...');
+		$analyzer = $this->plugin->opcache_analyzer;
+		$scripts = $analyzer->get_scripts_by_hits(0);
+		$scripts = $analyzer->filter_wordpress_scripts($scripts);
+		$all_files = array_map(fn($s) => $s['full_path'], $scripts);
+
+		// If OPcache is empty (e.g., in CLI mode), scan the filesystem.
+		if (empty($all_files)) {
+			\WP_CLI::log('  OPcache empty (CLI mode), scanning filesystem...');
+			// Scan WooCommerce and WordPress directories.
+			$scan_dirs = [
+				ABSPATH . 'wp-content/plugins/woocommerce',
+				ABSPATH . 'wp-content/plugins/woocommerce/includes',
+				ABSPATH . 'wp-content/plugins/woocommerce/src',
+				ABSPATH . 'wp-includes',
+			];
+			foreach ($scan_dirs as $dir) {
+				if (is_dir($dir)) {
+					$iterator = new \RecursiveIteratorIterator(
+						new \RecursiveDirectoryIterator($dir, \RecursiveDirectoryIterator::SKIP_DOTS)
+					);
+					foreach ($iterator as $file) {
+						if ($file->isFile() && $file->getExtension() === 'php') {
+							$all_files[] = $file->getPathname();
+						}
+					}
+				}
+			}
+			$all_files = array_unique($all_files);
+		}
+
+		$dependency_resolver->build_class_map($all_files);
+		\WP_CLI::log('  Scanned ' . count($all_files) . ' files');
+
+		// Get file dependencies.
+		$deps = $dependency_resolver->get_file_dependencies($file_path);
+		\WP_CLI::log('');
+		\WP_CLI::log('Resolving dependencies:');
+		\WP_CLI::log('');
+
+		$all_clean = true;
+		$problematic = [];
+
+		foreach ($deps as $dep_class) {
+			$dep_file = $dependency_resolver->get_class_file($dep_class);
+			if ($dep_file) {
+				$dep_method = $safety_analyzer->get_recommended_method($dep_file);
+				if ($dep_method === 'require_once') {
+					\WP_CLI::log("OK $dep_class");
+					\WP_CLI::log('    File: ' . $this->get_relative_path($dep_file));
+				} else {
+					$all_clean = false;
+					$problematic[] = ['class' => $dep_class, 'file' => $dep_file];
+					\WP_CLI::log("PROBLEM $dep_class");
+					\WP_CLI::log('    File: ' . $this->get_relative_path($dep_file));
+					\WP_CLI::log('    REASON: Has side effects - must use opcache_compile_file');
+				}
+			} else {
+				$all_clean = false;
+				$problematic[] = ['class' => $dep_class, 'file' => null];
+				\WP_CLI::log("PROBLEM $dep_class");
+				\WP_CLI::log('    REASON: Dependency file not found in preload list');
+			}
+		}
+
+		\WP_CLI::log('');
+		if ($all_clean) {
+			\WP_CLI::log('OK All dependencies are clean!');
+			\WP_CLI::log('This file should use require_once in the generated preload file.');
+		} else {
+			\WP_CLI::log('PROBLEM: Dependency issues found');
+			\WP_CLI::log('This file must use opcache_compile_file due to the above issues.');
+			\WP_CLI::log('');
+
+			// Show details of problematic files.
+			if (!empty($problematic)) {
+				\WP_CLI::log('');
+				\WP_CLI::log('Problematic dependency details:');
+				\WP_CLI::log('-------------------------------');
+				foreach ($problematic as $p) {
+					if ($p['file']) {
+						\WP_CLI::log('');
+						\WP_CLI::log($p['class']);
+						\WP_CLI::log('File: ' . $p['file']);
+						\WP_CLI::log('');
+						$content = file_get_contents($p['file']);
+						$lines = explode("\n", $content);
+						\WP_CLI::log('First 20 lines:');
+						for ($i = 0; $i < min(20, count($lines)); $i++) {
+							\WP_CLI::log('  ' . ($i + 1) . ': ' . $lines[$i]);
+						}
+					} else {
+						\WP_CLI::log('');
+						\WP_CLI::log($p['class']);
+						\WP_CLI::log('File: Not found in class map');
+						\WP_CLI::log('This dependency is not available in the preload candidate list.');
+					}
+				}
+			}
+		}
+
+		\WP_CLI::log('');
 	}
 }

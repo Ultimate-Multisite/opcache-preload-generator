@@ -3,11 +3,18 @@
  * Dependency Resolver class.
  *
  * Resolves class dependencies and sorts files for proper loading order.
+ * Uses PHP-Parser for accurate AST-based dependency analysis.
  *
  * @package OPcache_Preload_Generator
  */
 
 namespace OPcache_Preload_Generator;
+
+use PhpParser\Node;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor;
+use PhpParser\NodeVisitor\NameResolver;
+use PhpParser\ParserFactory;
 
 // Exit if accessed directly.
 if (! defined('ABSPATH')) {
@@ -15,9 +22,16 @@ if (! defined('ABSPATH')) {
 }
 
 /**
- * Resolves class dependencies for preload ordering.
+ * Resolves class dependencies for preload ordering using PHP-Parser.
  */
 class Dependency_Resolver {
+
+	/**
+	 * PHP-Parser instance.
+	 *
+	 * @var \PhpParser\Parser\Php7|null
+	 */
+	private $parser;
 
 	/**
 	 * Map of class names to file paths.
@@ -88,20 +102,33 @@ class Dependency_Resolver {
 	];
 
 	/**
-	 * WordPress core classes that are loaded early.
+	 * Get or create the PHP-Parser instance.
 	 *
-	 * NOTE: This list is intentionally empty. WordPress classes are NOT available
-	 * during PHP-FPM preload (before WordPress boots). They must be resolved
-	 * against the preload file list like any other dependency. The previous list
-	 * (WP_Widget, WP_REST_Controller, etc.) caused files to be preloaded via
-	 * require_once without their parent classes, crashing PHP-FPM on startup.
+	 * Supports both PHP-Parser v4 (create method) and v5 (createForNewestSupportedVersion).
 	 *
-	 * @var array<string>
+	 * @return \PhpParser\Parser
 	 */
-	private array $wp_core_classes = [];
+	private function get_parser() {
+
+		if (null === $this->parser) {
+			// Use fully qualified name to avoid conflicts with other versions.
+			$factory = new \PhpParser\ParserFactory();
+
+			// Check if we're using v4 or v5 of PHP-Parser.
+			if (method_exists($factory, 'create')) {
+				// PHP-Parser v4.x.
+				$this->parser = $factory->create(\PhpParser\ParserFactory::PREFER_PHP7);
+			} else {
+				// PHP-Parser v5.x.
+				$this->parser = $factory->createForNewestSupportedVersion();
+			}
+		}
+
+		return $this->parser;
+	}
 
 	/**
-	 * Parse a PHP file to extract class information.
+	 * Parse a PHP file to extract class information using PHP-Parser.
 	 *
 	 * @param string $path File path.
 	 * @return array{namespace: string, classes: array, dependencies: array}
@@ -133,92 +160,29 @@ class Dependency_Resolver {
 			return $result;
 		}
 
-		// Extract namespace.
-		if (preg_match('/^\s*namespace\s+([\w\\\\]+)\s*;/m', $content, $match)) {
-			$result['namespace'] = $match[1];
-		}
+		try {
+			$ast = $this->get_parser()->parse($content);
 
-		// Extract use statements.
-		if (preg_match_all('/^\s*use\s+([\w\\\\]+)(?:\s+as\s+(\w+))?\s*;/m', $content, $matches, PREG_SET_ORDER)) {
-			foreach ($matches as $match) {
-				$full_class                      = $match[1];
-				$alias                           = isset($match[2]) ? $match[2] : basename(str_replace('\\', '/', $full_class));
-				$result['use_imports'][ $alias ] = $full_class;
+			if (null === $ast) {
+				return $result;
 			}
-		}
 
-		// Extract class definitions.
-		if (preg_match_all('/^\s*(?:abstract\s+|final\s+)?class\s+(\w+)/m', $content, $matches)) {
-			foreach ($matches[1] as $class) {
-				$fqcn                = $result['namespace'] ? $result['namespace'] . '\\' . $class : $class;
-				$result['classes'][] = $fqcn;
-			}
-		}
+			// Use NameResolver visitor to resolve fully qualified names.
+			$traverser = new NodeTraverser();
+			$traverser->addVisitor(new NameResolver());
+			$ast = $traverser->traverse($ast);
 
-		// Extract interface definitions.
-		if (preg_match_all('/^\s*interface\s+(\w+)/m', $content, $matches)) {
-			foreach ($matches[1] as $interface) {
-				$fqcn                   = $result['namespace'] ? $result['namespace'] . '\\' . $interface : $interface;
-				$result['interfaces'][] = $fqcn;
-			}
-		}
+			// Extract information using visitor.
+			$visitor = new DependencyVisitor();
+			$traverser = new NodeTraverser();
+			$traverser->addVisitor($visitor);
+			$traverser->traverse($ast);
 
-		// Extract trait definitions.
-		if (preg_match_all('/^\s*trait\s+(\w+)/m', $content, $matches)) {
-			foreach ($matches[1] as $trait) {
-				$fqcn               = $result['namespace'] ? $result['namespace'] . '\\' . $trait : $trait;
-				$result['traits'][] = $fqcn;
-			}
+			$result = $visitor->get_result();
+		} catch (\Exception $e) {
+			// If parsing fails, return empty result.
+			// This can happen with PHP files that have syntax errors or use unsupported features.
 		}
-
-		// Extract extends clauses.
-		if (preg_match_all('/(?:class|interface)\s+\w+\s+extends\s+([\w\\\\]+(?:\s*,\s*[\w\\\\]+)*)/s', $content, $matches)) {
-			foreach ($matches[1] as $extends) {
-				$parents = preg_split('/\s*,\s*/', $extends);
-				foreach ($parents as $parent) {
-					$resolved = $this->resolve_class_name(trim($parent), $result['namespace'], $result['use_imports']);
-					if (! $this->is_core_class($resolved)) {
-						$result['dependencies'][] = $resolved;
-					}
-				}
-			}
-		}
-
-		// Extract implements clauses.
-		if (preg_match_all('/class\s+\w+(?:\s+extends\s+[\w\\\\]+)?\s+implements\s+([\w\\\\,\s]+)/s', $content, $matches)) {
-			foreach ($matches[1] as $implements) {
-				// Stop at opening brace.
-				$implements = preg_replace('/\{.*$/s', '', $implements);
-				$interfaces = preg_split('/\s*,\s*/', $implements);
-				foreach ($interfaces as $interface) {
-					$interface = trim($interface);
-					if (! empty($interface)) {
-						$resolved = $this->resolve_class_name($interface, $result['namespace'], $result['use_imports']);
-						if (! $this->is_core_class($resolved)) {
-							$result['dependencies'][] = $resolved;
-						}
-					}
-				}
-			}
-		}
-
-		// Extract trait uses inside classes.
-		if (preg_match_all('/^\s+use\s+([\w\\\\]+(?:\s*,\s*[\w\\\\]+)*)\s*[;{]/m', $content, $matches)) {
-			foreach ($matches[1] as $uses) {
-				$traits = preg_split('/\s*,\s*/', $uses);
-				foreach ($traits as $trait) {
-					$trait = trim($trait);
-					if (! empty($trait)) {
-						$resolved = $this->resolve_class_name($trait, $result['namespace'], $result['use_imports']);
-						if (! $this->is_core_class($resolved)) {
-							$result['dependencies'][] = $resolved;
-						}
-					}
-				}
-			}
-		}
-
-		$result['dependencies'] = array_unique($result['dependencies']);
 
 		// Cache result.
 		$this->file_data[ $path ] = $result;
@@ -264,13 +228,6 @@ class Dependency_Resolver {
 	/**
 	 * Check if a class is a core PHP or WordPress class.
 	 *
-	 * Only checks against hardcoded lists of known core classes. Does NOT use
-	 * class_exists() because the dependency resolver runs in WP-CLI context
-	 * where WordPress has already loaded many classes via autoloaders. Those
-	 * classes won't be available during PHP-FPM preload (before WordPress boots),
-	 * so treating them as "already available" causes files to be included in the
-	 * preload without their dependencies.
-	 *
 	 * @param string $class_name Class name.
 	 * @return bool
 	 */
@@ -280,11 +237,6 @@ class Dependency_Resolver {
 
 		// Core PHP classes.
 		if (in_array($class_name, $this->core_classes, true)) {
-			return true;
-		}
-
-		// WordPress core classes.
-		if (in_array($class_name, $this->wp_core_classes, true)) {
 			return true;
 		}
 
@@ -526,5 +478,181 @@ class Dependency_Resolver {
 		$this->file_to_classes   = [];
 		$this->file_dependencies = [];
 		$this->file_data         = [];
+	}
+}
+
+/**
+ * AST Visitor for extracting dependencies.
+ */
+class DependencyVisitor implements NodeVisitor {
+
+	/**
+	 * Parser result.
+	 *
+	 * @var array
+	 */
+	private array $result = [
+		'namespace'    => '',
+		'use_imports'  => [],
+		'classes'      => [],
+		'interfaces'   => [],
+		'traits'       => [],
+		'dependencies' => [],
+	];
+
+	/**
+	 * Current namespace.
+	 *
+	 * @var string
+	 */
+	private string $current_namespace = '';
+
+	/**
+	 * Called once before traversal.
+	 *
+	 * @param array $nodes AST nodes.
+	 * @return void
+	 */
+	public function beforeTraverse(array $nodes): void {
+
+		$this->result = [
+			'namespace'    => '',
+			'use_imports'  => [],
+			'classes'      => [],
+			'interfaces'   => [],
+			'traits'       => [],
+			'dependencies' => [],
+		];
+		$this->current_namespace = '';
+	}
+
+	/**
+	 * Called when entering a node.
+	 *
+	 * @param Node $node Node.
+	 * @return int|null
+	 */
+	public function enterNode(Node $node): ?int {
+
+		if ($node instanceof Node\Stmt\Namespace_) {
+			$this->current_namespace = $node->name ? $node->name->toString() : '';
+			$this->result['namespace'] = $this->current_namespace;
+		}
+
+		if ($node instanceof Node\Stmt\Use_) {
+			foreach ($node->uses as $use) {
+				$name = $use->name->toString();
+				$alias = $use->getAlias()->toString();
+				$this->result['use_imports'][ $alias ] = $name;
+			}
+		}
+
+		if ($node instanceof Node\Stmt\Class_) {
+			if ($node->namespacedName) {
+				$class_name = $node->namespacedName->toString();
+				$this->result['classes'][] = $class_name;
+
+				// Check extends.
+				if ($node->extends) {
+					$this->add_dependency($node->extends->toString());
+				}
+
+				// Check implements.
+				foreach ($node->implements as $interface) {
+					$this->add_dependency($interface->toString());
+				}
+
+				// Check trait uses.
+				foreach ($node->stmts as $stmt) {
+					if ($stmt instanceof Node\Stmt\TraitUse) {
+						foreach ($stmt->traits as $trait) {
+							$this->add_dependency($trait->toString());
+						}
+					}
+				}
+			}
+		}
+
+		if ($node instanceof Node\Stmt\Interface_) {
+			if ($node->namespacedName) {
+				$interface_name = $node->namespacedName->toString();
+				$this->result['interfaces'][] = $interface_name;
+
+				// Check extends (interfaces can extend other interfaces).
+				foreach ($node->extends as $parent) {
+					$this->add_dependency($parent->toString());
+				}
+			}
+		}
+
+		if ($node instanceof Node\Stmt\Trait_) {
+			if ($node->namespacedName) {
+				$trait_name = $node->namespacedName->toString();
+				$this->result['traits'][] = $trait_name;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Add a dependency.
+	 *
+	 * @param string $name Class name.
+	 * @return void
+	 */
+	private function add_dependency(string $name): void {
+
+		$name = ltrim($name, '\\');
+
+		// Skip core classes.
+		$core_classes = [
+			'stdClass', 'Exception', 'Error', 'Throwable', 'Iterator', 'IteratorAggregate',
+			'ArrayAccess', 'Countable', 'Serializable', 'Traversable', 'JsonSerializable',
+			'Stringable', 'Closure', 'Generator', 'DateTime', 'DateTimeImmutable',
+			'DateTimeInterface', 'DateInterval', 'DateTimeZone', 'PDO', 'PDOStatement',
+			'PDOException', 'ReflectionClass', 'ReflectionMethod', 'ReflectionProperty',
+			'ReflectionException', 'ArrayObject', 'SplFileInfo', 'SplFileObject',
+			'SplObjectStorage', 'WeakReference', 'WeakMap',
+		];
+
+		if (in_array($name, $core_classes, true)) {
+			return;
+		}
+
+		$this->result['dependencies'][] = $name;
+	}
+
+	/**
+	 * Called when leaving a node.
+	 *
+	 * @param Node $node Node.
+	 * @return null
+	 */
+	public function leaveNode(Node $node): ?int {
+
+		return null;
+	}
+
+	/**
+	 * Called once after traversal.
+	 *
+	 * @param array $nodes AST nodes.
+	 * @return void
+	 */
+	public function afterTraverse(array $nodes): void {
+
+		// Remove duplicates from dependencies.
+		$this->result['dependencies'] = array_unique($this->result['dependencies']);
+	}
+
+	/**
+	 * Get the parsing result.
+	 *
+	 * @return array
+	 */
+	public function get_result(): array {
+
+		return $this->result;
 	}
 }

@@ -67,20 +67,6 @@ class Plugin {
 	public ?Ajax_Handler $ajax_handler = null;
 
 	/**
-	 * Preload tester instance.
-	 *
-	 * @var Preload_Tester|null
-	 */
-	public ?Preload_Tester $preload_tester = null;
-
-	/**
-	 * Auto optimizer instance.
-	 *
-	 * @var Auto_Optimizer|null
-	 */
-	public ?Auto_Optimizer $auto_optimizer = null;
-
-	/**
 	 * Dependency resolver instance.
 	 *
 	 * @var Dependency_Resolver|null
@@ -144,16 +130,10 @@ class Plugin {
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-file-safety-analyzer.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-dependency-resolver.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-generator.php';
-		require_once OPCACHE_PRELOAD_DIR . 'inc/class-preload-tester.php';
-		require_once OPCACHE_PRELOAD_DIR . 'inc/class-auto-optimizer.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-rest-api.php';
 
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-admin-page.php';
 		require_once OPCACHE_PRELOAD_DIR . 'inc/class-ajax-handler.php';
-
-		if (is_admin()) {
-			require_once OPCACHE_PRELOAD_DIR . 'inc/class-file-list-table.php';
-		}
 
 		if (defined('WP_CLI') && WP_CLI) {
 			require_once OPCACHE_PRELOAD_DIR . 'inc/class-cli-command.php';
@@ -171,8 +151,6 @@ class Plugin {
 		$this->safety_analyzer     = new File_Safety_Analyzer();
 		$this->dependency_resolver = new Dependency_Resolver();
 		$this->preload_generator   = new Preload_Generator($this->safety_analyzer, $this->dependency_resolver);
-		$this->preload_tester      = new Preload_Tester();
-		$this->auto_optimizer      = new Auto_Optimizer($this, $this->preload_tester);
 		$this->rest_api            = new Rest_API($this);
 
 		if (is_admin()) {
@@ -210,152 +188,6 @@ class Plugin {
 	}
 
 	/**
-	 * Get the saved preload files list.
-	 *
-	 * Returns array of file paths for backward compatibility.
-	 * Use get_preload_files_config() for full configuration.
-	 *
-	 * @return array<string>
-	 */
-	public function get_preload_files(): array {
-
-		$files = get_option('opcache_preload_files', []);
-
-		// Handle both old (string array) and new (config array) formats.
-		$paths = [];
-		foreach ($files as $file) {
-			if (is_array($file)) {
-				$paths[] = $file['path'] ?? '';
-			} else {
-				$paths[] = $file;
-			}
-		}
-
-		return array_filter($paths);
-	}
-
-	/**
-	 * Get the saved preload files with full configuration.
-	 *
-	 * @return array<array{path: string, method: string}>
-	 */
-	public function get_preload_files_config(): array {
-
-		$files    = get_option('opcache_preload_files', []);
-		$settings = $this->get_settings();
-		$default  = $settings['use_require'] ? 'require_once' : 'opcache_compile_file';
-
-		// Normalize to config array format.
-		$config = [];
-		foreach ($files as $file) {
-			if (is_array($file)) {
-				$config[] = [
-					'path'   => $file['path'] ?? '',
-					'method' => $file['method'] ?? $default,
-				];
-			} else {
-				$config[] = [
-					'path'   => $file,
-					'method' => $default,
-				];
-			}
-		}
-
-		return array_filter($config, fn($f) => ! empty($f['path']));
-	}
-
-	/**
-	 * Save the preload files list.
-	 *
-	 * @param array<string|array<string, mixed>> $files List of file paths or config arrays.
-	 * @return bool
-	 */
-	public function save_preload_files(array $files): bool {
-
-		// Normalize input - deduplicate by path.
-		$normalized = [];
-		$seen_paths = [];
-
-		foreach ($files as $file) {
-			if (is_array($file)) {
-				$path   = $file['path'] ?? '';
-				$method = $file['method'] ?? 'require_once';
-			} else {
-				$path   = $file;
-				$method = 'require_once';
-			}
-
-			if (empty($path) || in_array($path, $seen_paths, true)) {
-				continue;
-			}
-
-			$seen_paths[] = $path;
-			$normalized[] = [
-				'path'   => $path,
-				'method' => $method,
-			];
-		}
-
-		return update_option('opcache_preload_files', $normalized);
-	}
-
-	/**
-	 * Update the method for a specific file.
-	 *
-	 * @param string $path   File path.
-	 * @param string $method Method ('require_once' or 'opcache_compile_file').
-	 * @return bool
-	 */
-	public function update_file_method(string $path, string $method): bool {
-
-		$files = get_option('opcache_preload_files', []);
-
-		// Validate method.
-		if (! in_array($method, ['require_once', 'opcache_compile_file'], true)) {
-			return false;
-		}
-
-		// Find and update the file.
-		foreach ($files as $key => $file) {
-			$file_path = is_array($file) ? ($file['path'] ?? '') : $file;
-
-			if ($file_path === $path) {
-				$files[ $key ] = [
-					'path'   => $path,
-					'method' => $method,
-				];
-
-				return update_option('opcache_preload_files', $files);
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Get the method for a specific file.
-	 *
-	 * @param string $path File path.
-	 * @return string Method name or empty string if not found.
-	 */
-	public function get_file_method(string $path): string {
-
-		$files    = get_option('opcache_preload_files', []);
-		$settings = $this->get_settings();
-		$default  = $settings['use_require'] ? 'require_once' : 'opcache_compile_file';
-
-		foreach ($files as $file) {
-			$file_path = is_array($file) ? ($file['path'] ?? '') : $file;
-
-			if ($file_path === $path) {
-				return is_array($file) ? ($file['method'] ?? $default) : $default;
-			}
-		}
-
-		return '';
-	}
-
-	/**
 	 * Get plugin settings.
 	 *
 	 * @return array<string, mixed>
@@ -363,12 +195,9 @@ class Plugin {
 	public function get_settings(): array {
 
 		$defaults = [
-			// Default to require_once for better performance (classes/functions pre-loaded).
-			// The auto-optimizer will automatically fall back to opcache_compile_file
-			// for files that cause redeclaration errors.
-			'use_require'      => true,
+			// Output path for the generated preload.php file.
 			'output_path'      => ABSPATH . 'preload.php',
-			'auto_suggest_top' => 50,
+			// Patterns to exclude from preloading.
 			'exclude_patterns' => [
 				// Test files.
 				'*/tests/*',

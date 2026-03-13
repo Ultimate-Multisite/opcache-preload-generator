@@ -33,23 +33,11 @@ class Ajax_Handler {
 
 		$this->plugin = $plugin;
 
-		add_action('wp_ajax_opcache_preload_analyze_file', [$this, 'analyze_file']);
-		add_action('wp_ajax_opcache_preload_analyze_suggested', [$this, 'analyze_suggested']);
-		add_action('wp_ajax_opcache_preload_add_file', [$this, 'add_file']);
-		add_action('wp_ajax_opcache_preload_remove_file', [$this, 'remove_file']);
-		add_action('wp_ajax_opcache_preload_update_file_method', [$this, 'update_file_method']);
 		add_action('wp_ajax_opcache_preload_generate', [$this, 'generate_preload']);
 		add_action('wp_ajax_opcache_preload_delete', [$this, 'delete_preload']);
 		add_action('wp_ajax_opcache_preload_save_settings', [$this, 'save_settings']);
 		add_action('wp_ajax_opcache_preload_preview', [$this, 'preview_preload']);
-
-		// Auto-optimization AJAX handlers.
-		add_action('wp_ajax_opcache_preload_start_optimize', [$this, 'start_optimize']);
-		add_action('wp_ajax_opcache_preload_run_baseline', [$this, 'run_baseline']);
-		add_action('wp_ajax_opcache_preload_process_next', [$this, 'process_next']);
-		add_action('wp_ajax_opcache_preload_stop_optimize', [$this, 'stop_optimize']);
-		add_action('wp_ajax_opcache_preload_get_optimize_state', [$this, 'get_optimize_state']);
-		add_action('wp_ajax_opcache_preload_reset_optimize', [$this, 'reset_optimize']);
+		add_action('wp_ajax_opcache_preload_candidates_preview', [$this, 'candidates_preview']);
 	}
 
 	/**
@@ -77,104 +65,19 @@ class Ajax_Handler {
 	}
 
 	/**
-	 * Analyze a single file.
+	 * Get files for preloading from OPcache statistics.
 	 *
-	 * @return void
-	 */
-	public function analyze_file(): void {
-
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$file = isset($_POST['file']) ? sanitize_text_field(wp_unslash($_POST['file'])) : '';
-
-		if (empty($file)) {
-			wp_send_json_error(['message' => __('No file specified.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		// Validate file path - must be within ABSPATH.
-		$realpath = realpath($file);
-		$abspath  = realpath(ABSPATH);
-
-		if (! $realpath || ! $abspath || 0 !== strpos($realpath, $abspath)) {
-			wp_send_json_error(['message' => __('Invalid file path.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		$result             = $this->plugin->safety_analyzer->analyze_file($realpath);
-		$result['file']     = $realpath;
-		$result['relative'] = $this->get_relative_path($realpath);
-		$result['in_list']  = in_array($realpath, $this->plugin->get_preload_files(), true);
-
-		wp_send_json_success($result);
-	}
-
-	/**
-	 * Analyze suggested files from OPcache.
+	 * Automatically selects top files based on hit count.
 	 *
-	 * @return void
+	 * @return array<array{path: string, method: string}>
 	 */
-	public function analyze_suggested(): void {
+	private function get_files_for_preload(): array {
 
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$limit = isset($_POST['limit']) ? absint($_POST['limit']) : 50;
-		$limit = min($limit, 10000); // Cap at 10000.
-
-		$analyzer = $this->plugin->opcache_analyzer;
 		$settings = $this->plugin->get_settings();
+		$analyzer = $this->plugin->opcache_analyzer;
 
-		// Debug: Check OPcache status.
-		$status = $analyzer->get_status(true);
-		$debug  = [
-			'opcache_available'  => $analyzer->is_available(),
-			'status_returned'    => false !== $status,
-			'scripts_key_exists' => is_array($status) && isset($status['scripts']),
-			'scripts_count'      => is_array($status) && isset($status['scripts']) ? count($status['scripts']) : 0,
-		];
-
-		// Check restrict_api setting.
-		$config = $analyzer->get_configuration();
-		if ($config && isset($config['directives']['opcache.restrict_api'])) {
-			$debug['restrict_api'] = $config['directives']['opcache.restrict_api'];
-		}
-
-		// Debug: Check ABSPATH and sample script paths.
-		$debug['abspath']          = ABSPATH;
-		$debug['abspath_realpath'] = realpath(ABSPATH);
-		$abspath_real              = realpath(ABSPATH);
-		if (is_array($status) && isset($status['scripts']) && ! empty($status['scripts'])) {
-			$matching_count  = 0;
-			$matching_sample = [];
-			$other_sample    = [];
-
-			foreach (array_keys($status['scripts']) as $path) {
-				$realpath = realpath($path);
-				if ($realpath && $abspath_real && 0 === strpos($realpath, $abspath_real)) {
-					++$matching_count;
-					if (count($matching_sample) < 5) {
-						$matching_sample[] = $path;
-					}
-				} elseif (count($other_sample) < 3) {
-					$other_sample[] = $path;
-				}
-			}
-
-			$debug['matching_scripts_count'] = $matching_count;
-			$debug['matching_sample_paths']  = $matching_sample;
-			$debug['non_matching_sample']    = $other_sample;
-		}
-
-		// Get scripts by hit count.
-		$scripts = $analyzer->get_scripts_by_hits($limit * 2);
+		// Get top files from OPcache.
+		$scripts = $analyzer->get_scripts_by_hits(200); // Get top 200 files.
 
 		// Filter to WordPress files only.
 		$scripts = $analyzer->filter_wordpress_scripts($scripts);
@@ -182,177 +85,28 @@ class Ajax_Handler {
 		// Exclude patterns.
 		$scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
 
-		// Limit results.
-		$scripts = array_slice($scripts, 0, $limit);
-
-		$results       = [];
-		$current_files = $this->plugin->get_preload_files();
+		$files = [];
 
 		foreach ($scripts as $script) {
-			$path = $script['full_path'];
+			$path = $script['full_path'] ?? '';
 
-			$analysis             = $this->plugin->safety_analyzer->analyze_file($path);
-			$analysis['file']     = $path;
-			$analysis['relative'] = $this->get_relative_path($path);
-			$analysis['hits']     = $script['hits'] ?? 0;
-			$analysis['memory']   = $script['memory_consumption'] ?? 0;
-			$analysis['in_list']  = in_array($path, $current_files, true);
+			if (empty($path) || ! file_exists($path)) {
+				continue;
+			}
 
-			$results[] = $analysis;
+			// Analyze file for safety.
+			$analysis = $this->plugin->safety_analyzer->analyze_file($path);
+
+			// Only include safe files.
+			if ($analysis['safe'] && empty($analysis['errors'])) {
+				$files[] = [
+					'path'   => $path,
+					'method' => 'opcache_compile_file',
+				];
+			}
 		}
 
-		wp_send_json_success(
-			[
-				'files' => $results,
-				'total' => count($results),
-				'debug' => $debug,
-			]
-		);
-	}
-
-	/**
-	 * Add a file to the preload list.
-	 *
-	 * @return void
-	 */
-	public function add_file(): void {
-
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$file = isset($_POST['file']) ? sanitize_text_field(wp_unslash($_POST['file'])) : '';
-
-		if (empty($file)) {
-			wp_send_json_error(['message' => __('No file specified.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		// Validate file path.
-		$realpath = realpath($file);
-		$abspath  = realpath(ABSPATH);
-
-		if (! $realpath || ! $abspath || 0 !== strpos($realpath, $abspath)) {
-			wp_send_json_error(['message' => __('Invalid file path.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		// Check file extension.
-		$ext = pathinfo($realpath, PATHINFO_EXTENSION);
-		if ('php' !== strtolower($ext)) {
-			wp_send_json_error(['message' => __('Only PHP files can be preloaded.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		// Add to list.
-		$files = $this->plugin->get_preload_files();
-
-		if (in_array($realpath, $files, true)) {
-			wp_send_json_error(['message' => __('File is already in the preload list.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		$files[] = $realpath;
-		$this->plugin->save_preload_files($files);
-
-		wp_send_json_success(
-			[
-				'message' => __('File added to preload list.', 'opcache-preload-generator'),
-				'file'    => $realpath,
-				'count'   => count($files),
-			]
-		);
-	}
-
-	/**
-	 * Remove a file from the preload list.
-	 *
-	 * @return void
-	 */
-	public function remove_file(): void {
-
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$file = isset($_POST['file']) ? sanitize_text_field(wp_unslash($_POST['file'])) : '';
-
-		if (empty($file)) {
-			wp_send_json_error(['message' => __('No file specified.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		$files = $this->plugin->get_preload_files();
-		$key   = array_search($file, $files, true);
-
-		if (false === $key) {
-			wp_send_json_error(['message' => __('File is not in the preload list.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		unset($files[ $key ]);
-		$this->plugin->save_preload_files($files);
-
-		wp_send_json_success(
-			[
-				'message' => __('File removed from preload list.', 'opcache-preload-generator'),
-				'file'    => $file,
-				'count'   => count($files),
-			]
-		);
-	}
-
-	/**
-	 * Update the method for a file.
-	 *
-	 * @return void
-	 */
-	public function update_file_method(): void {
-
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		// phpcs:disable WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$file   = isset($_POST['file']) ? sanitize_text_field(wp_unslash($_POST['file'])) : '';
-		$method = isset($_POST['method']) ? sanitize_text_field(wp_unslash($_POST['method'])) : '';
-		// phpcs:enable WordPress.Security.NonceVerification.Missing
-
-		if (empty($file)) {
-			wp_send_json_error(['message' => __('No file specified.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		if (! in_array($method, ['require_once', 'opcache_compile_file'], true)) {
-			wp_send_json_error(['message' => __('Invalid method specified.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		$result = $this->plugin->update_file_method($file, $method);
-
-		if (! $result) {
-			wp_send_json_error(['message' => __('File not found in preload list.', 'opcache-preload-generator')]);
-
-			return;
-		}
-
-		wp_send_json_success(
-			[
-				'message' => __('File method updated.', 'opcache-preload-generator'),
-				'file'    => $file,
-				'method'  => $method,
-			]
-		);
+		return $files;
 	}
 
 	/**
@@ -366,44 +120,20 @@ class Ajax_Handler {
 			return;
 		}
 
-		$files_config = $this->plugin->get_preload_files_config();
-		$files        = $this->plugin->get_preload_files();
-		$settings     = $this->plugin->get_settings();
+		$settings = $this->plugin->get_settings();
 
-		if (empty($files)) {
-			wp_send_json_error(['message' => __('No files in preload list.', 'opcache-preload-generator')]);
+		// Get files automatically from OPcache.
+		$files_config = $this->get_files_for_preload();
 
-			return;
-		}
-
-		// Validate files.
-		$validation = $this->plugin->preload_generator->validate_files($files);
-
-		if (! empty($validation['invalid'])) {
-			$invalid_count = count($validation['invalid']);
-			wp_send_json_error(
-				[
-					'message' => sprintf(
-						/* translators: %d: number of invalid files */
-						_n(
-							'%d file is missing or invalid. Please remove it from the list first.',
-							'%d files are missing or invalid. Please remove them from the list first.',
-							$invalid_count,
-							'opcache-preload-generator'
-						),
-						$invalid_count
-					),
-					'invalid' => $validation['invalid'],
-				]
-			);
+		if (empty($files_config)) {
+			wp_send_json_error(['message' => __('No suitable files found in OPcache. Please browse your site to populate the cache, then try again.', 'opcache-preload-generator')]);
 
 			return;
 		}
 
-		// Generate file with safety options.
+		// Generate file.
 		$output_path = $settings['output_path'];
 		$options     = [
-			'use_require'    => $settings['use_require'],
 			'validate_files' => true,
 			'output_path'    => $output_path,
 			'abspath'        => ABSPATH,
@@ -472,10 +202,6 @@ class Ajax_Handler {
 		$settings = $this->plugin->get_settings();
 
 		// phpcs:disable WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		if (isset($_POST['use_require'])) {
-			$settings['use_require'] = (bool) $_POST['use_require'];
-		}
-
 		if (isset($_POST['output_path'])) {
 			$path = sanitize_text_field(wp_unslash($_POST['output_path']));
 
@@ -488,15 +214,6 @@ class Ajax_Handler {
 
 				return;
 			}
-		}
-
-		if (isset($_POST['auto_suggest_top'])) {
-			$settings['auto_suggest_top'] = min(10000, max(10, absint($_POST['auto_suggest_top'])));
-		}
-
-		if (isset($_POST['exclude_patterns'])) {
-			$patterns                     = sanitize_textarea_field(wp_unslash($_POST['exclude_patterns']));
-			$settings['exclude_patterns'] = array_filter(array_map('trim', explode("\n", $patterns)));
 		}
 		// phpcs:enable WordPress.Security.NonceVerification.Missing
 
@@ -521,17 +238,18 @@ class Ajax_Handler {
 			return;
 		}
 
-		$files_config = $this->plugin->get_preload_files_config();
-		$settings     = $this->plugin->get_settings();
+		$settings = $this->plugin->get_settings();
+
+		// Get files automatically from OPcache.
+		$files_config = $this->get_files_for_preload();
 
 		if (empty($files_config)) {
-			wp_send_json_error(['message' => __('No files in preload list.', 'opcache-preload-generator')]);
+			wp_send_json_error(['message' => __('No suitable files found in OPcache.', 'opcache-preload-generator')]);
 
 			return;
 		}
 
 		$options = [
-			'use_require'    => $settings['use_require'],
 			'validate_files' => true,
 			'output_path'    => $settings['output_path'],
 			'abspath'        => ABSPATH,
@@ -548,136 +266,119 @@ class Ajax_Handler {
 	}
 
 	/**
-	 * Start the auto-optimization process.
+	 * Get candidate files preview based on threshold.
 	 *
 	 * @return void
 	 */
-	public function start_optimize(): void {
+	public function candidates_preview(): void {
 
 		if (! $this->verify_request()) {
 			return;
 		}
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify_request()
-		$max_files_input = isset($_POST['max_files']) ? sanitize_text_field(wp_unslash($_POST['max_files'])) : 'auto';
+		$threshold = isset($_POST['threshold']) ? (float) $_POST['threshold'] : 0.7;
+		$threshold = max(0.01, min(1.0, $threshold));
 
-		// Handle "auto" mode - detect optimal number based on hit distribution.
-		if ('auto' === $max_files_input) {
-			$result = $this->plugin->auto_optimizer->start_auto();
-		} else {
-			$max_files = absint($max_files_input);
-			$max_files = min($max_files, 5000); // Cap at 500 for safety.
-			$result    = $this->plugin->auto_optimizer->start($max_files);
-		}
+		$analyzer = $this->plugin->opcache_analyzer;
+		$settings = $this->plugin->get_settings();
 
-		if ($result['success']) {
-			wp_send_json_success($result);
-		} else {
-			wp_send_json_error($result);
-		}
-	}
+		// Get scripts from OPcache.
+		$scripts = $analyzer->get_scripts_by_hits(500);
 
-	/**
-	 * Run the baseline test.
-	 *
-	 * @return void
-	 */
-	public function run_baseline(): void {
+		// Filter to WordPress files only.
+		$scripts = $analyzer->filter_wordpress_scripts($scripts);
 
-		if (! $this->verify_request()) {
+		// Exclude patterns.
+		$scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
+
+		if (empty($scripts)) {
+			wp_send_json_success(
+				[
+					'total'         => 0,
+					'candidates'    => [],
+					'cutoff_hits'   => 0,
+					'reference'     => null,
+				]
+			);
+
 			return;
 		}
 
-		$result = $this->plugin->auto_optimizer->run_baseline_test();
+		// Find a reference file - a WordPress core file that's loaded on every request.
+		$reference_files = [
+			'wp-includes/l10n.php',
+			'wp-includes/option.php',
+			'wp-includes/formatting.php',
+			'wp-includes/class-wp.php',
+			'wp-includes/class-wp-query.php',
+			'wp-includes/load.php',
+			'wp-includes/plugin.php',
+			'wp-includes/functions.php',
+		];
 
-		if ($result['success']) {
-			wp_send_json_success($result);
-		} else {
-			wp_send_json_error($result);
-		}
-	}
+		$reference_hits = 0;
+		$reference_file = '';
 
-	/**
-	 * Process the next file in the optimization queue.
-	 *
-	 * @return void
-	 */
-	public function process_next(): void {
-
-		if (! $this->verify_request()) {
-			return;
-		}
-
-		$result = $this->plugin->auto_optimizer->process_next_file();
-
-		if ($result['success']) {
-			wp_send_json_success($result);
-		} else {
-			wp_send_json_error($result);
-		}
-	}
-
-	/**
-	 * Stop the optimization process.
-	 *
-	 * @return void
-	 */
-	public function stop_optimize(): void {
-
-		if (! $this->verify_request()) {
-			return;
+		foreach ($reference_files as $ref_suffix) {
+			foreach ($scripts as $script) {
+				$path = $script['full_path'] ?? '';
+				if (substr($path, -strlen($ref_suffix)) === $ref_suffix) {
+					$reference_hits = $script['hits'] ?? 0;
+					$reference_file = $ref_suffix;
+					break 2;
+				}
+			}
 		}
 
-		$result = $this->plugin->auto_optimizer->stop();
-
-		if ($result['success']) {
-			wp_send_json_success($result);
-		} else {
-			wp_send_json_error($result);
-		}
-	}
-
-	/**
-	 * Get the current optimization state.
-	 *
-	 * @return void
-	 */
-	public function get_optimize_state(): void {
-
-		if (! $this->verify_request()) {
-			return;
+		// Fallback to median if no reference file found.
+		if (0 === $reference_hits) {
+			$hits_array = array_column($scripts, 'hits');
+			sort($hits_array);
+			$median_index   = (int) floor(count($hits_array) / 2);
+			$reference_hits = $hits_array[ $median_index ] ?? 0;
+			$reference_file = 'median';
 		}
 
-		$state = $this->plugin->auto_optimizer->get_state();
+		// Calculate cutoff based on reference file hits * threshold.
+		$cutoff_hits = (int) round($reference_hits * $threshold);
 
-		wp_send_json_success(['state' => $state]);
-	}
+		// Filter candidates above threshold.
+		// Note: Skip safety analysis for preview to show all potential candidates.
+		// Safety analysis is done during actual file generation.
+		$candidates = [];
+		foreach ($scripts as $script) {
+			if (($script['hits'] ?? 0) >= $cutoff_hits) {
+				$path = $script['full_path'] ?? '';
 
-	/**
-	 * Reset the optimization state.
-	 *
-	 * @return void
-	 */
-	public function reset_optimize(): void {
+				if (empty($path) || ! file_exists($path)) {
+					continue;
+				}
 
-		if (! $this->verify_request()) {
-			return;
+				// Skip safety analysis for preview - just show the file.
+				$candidates[] = [
+					'path'      => $this->get_relative_path($path),
+					'full_path' => $path,
+					'hits'      => $script['hits'] ?? 0,
+					'memory'    => $script['memory_consumption'] ?? 0,
+				];
+			}
 		}
 
-		// Clean up test file.
-		$this->plugin->preload_tester->delete_test_file();
+		// Get files near the cutoff (last 5 candidates around the threshold).
+		$near_cutoff = array_slice($candidates, -5, 5, true);
 
-		// Clean up token file.
-		$token_file = ABSPATH . '.opcache_test_token';
-		if (file_exists($token_file)) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-			unlink($token_file);
-		}
-
-		// Reset state.
-		$this->plugin->auto_optimizer->reset_state();
-
-		wp_send_json_success(['message' => __('Optimization state reset.', 'opcache-preload-generator')]);
+		wp_send_json_success(
+			[
+				'total'       => count($candidates),
+				'candidates'  => $near_cutoff,
+				'cutoff_hits' => $cutoff_hits,
+				'reference'   => [
+					'file' => $reference_file,
+					'hits' => $reference_hits,
+				],
+			]
+		);
 	}
 
 	/**
