@@ -533,6 +533,39 @@ class File_Safety_Analyzer {
 			}
 		}
 
+		// Extract return type declarations (e.g., function foo(): ClassName).
+		if (preg_match_all('/\bfunction\s+\w+\s*\([^)]*\)\s*:\s*\??([\w\\\\]+)/', $content, $matches)) {
+			foreach ($matches[1] as $return_type) {
+				// Skip primitive types.
+				$primitives = ['void', 'int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent', 'null', 'true', 'false'];
+				if (! in_array(strtolower($return_type), $primitives, true)) {
+					$result['dependencies'][] = $return_type;
+				}
+			}
+		}
+
+		// Extract parameter type declarations (e.g., function foo(ClassName $bar)).
+		if (preg_match_all('/\bfunction\s+\w+\s*\(\s*[^)]*\b([\w\\\\]+)\s+\$\w+/', $content, $matches)) {
+			foreach ($matches[1] as $param_type) {
+				// Skip primitive types.
+				$primitives = ['int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent'];
+				if (! in_array(strtolower($param_type), $primitives, true)) {
+					$result['dependencies'][] = $param_type;
+				}
+			}
+		}
+
+		// Extract property type declarations (e.g., public ClassName $prop).
+		if (preg_match_all('/\b(?:public|protected|private)\s+(?:readonly\s+)?\??([\w\\\\]+)\s+\$\w+/', $content, $matches)) {
+			foreach ($matches[1] as $prop_type) {
+				// Skip primitive types.
+				$primitives = ['int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent'];
+				if (! in_array(strtolower($prop_type), $primitives, true)) {
+					$result['dependencies'][] = $prop_type;
+				}
+			}
+		}
+
 		$result['dependencies'] = array_unique($result['dependencies']);
 	}
 

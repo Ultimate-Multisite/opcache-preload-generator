@@ -592,6 +592,28 @@ class DependencyVisitor implements NodeVisitor {
 			}
 		}
 
+		// Check for method return type declarations.
+		if ($node instanceof Node\Stmt\ClassMethod) {
+			if ($node->returnType && $node->returnType instanceof Node\Name) {
+				$this->add_dependency($node->returnType->toString());
+			}
+			// Check parameter type declarations.
+			foreach ($node->params as $param) {
+				if ($param->type && $param->type instanceof Node\Name) {
+					$this->add_dependency($param->type->toString());
+				}
+			}
+		}
+
+		// Check for property type declarations.
+		if ($node instanceof Node\Stmt\Property) {
+			foreach ($node->props as $prop) {
+				if ($prop->type && $prop->type instanceof Node\Name) {
+					$this->add_dependency($prop->type->toString());
+				}
+			}
+		}
+
 		return null;
 	}
 
