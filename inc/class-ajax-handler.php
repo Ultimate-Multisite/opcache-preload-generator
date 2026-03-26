@@ -73,16 +73,17 @@ class Ajax_Handler {
 	 */
 	private function get_files_for_preload(): array {
 
-		$settings = $this->plugin->get_settings();
-		$analyzer = $this->plugin->opcache_analyzer;
+		$settings  = $this->plugin->get_settings();
+		$analyzer  = $this->plugin->opcache_analyzer;
+		$threshold = isset($settings['threshold']) ? (float) $settings['threshold'] : 0.7;
 
-		// Get top files from OPcache.
-		$scripts = $analyzer->get_scripts_by_hits(200); // Get top 200 files.
+		// Get high-hit scripts using the threshold algorithm.
+		// This uses a WordPress core reference file as baseline and includes
+		// all files with hits >= (reference_hits * threshold).
+		$result  = $analyzer->get_high_hit_scripts($threshold);
+		$scripts = $result['scripts'];
 
-		// Filter to WordPress files only.
-		$scripts = $analyzer->filter_wordpress_scripts($scripts);
-
-		// Exclude patterns.
+		// Exclude patterns from settings.
 		$scripts = $analyzer->exclude_patterns($scripts, $settings['exclude_patterns']);
 
 		$files = [];
@@ -94,7 +95,12 @@ class Ajax_Handler {
 				continue;
 			}
 
-			// Analyze file for safety.
+			// Fast blacklist check first (path-only, no file I/O).
+			if ($this->plugin->safety_analyzer->is_blacklisted($path)) {
+				continue;
+			}
+
+			// Full safety analysis.
 			$analysis = $this->plugin->safety_analyzer->analyze_file($path);
 
 			// Only include safe files.

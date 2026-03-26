@@ -105,6 +105,19 @@ class File_Safety_Analyzer {
 
 		// CLI-only files in plugins/themes.
 		'cli-commands'      => '/cli/',
+
+		// Object cache drop-in plugins. These replace wp-content/object-cache.php
+		// and their files depend on WordPress runtime state (database connection,
+		// constants, global $wp_object_cache). They are loaded by WordPress's own
+		// bootstrap before any request code runs, so preloading them is both
+		// unnecessary and dangerous — their code calls WordPress functions that
+		// don't exist at preload time.
+		'docket-cache'      => '/plugins/docket-cache/',
+		'redis-cache'       => '/plugins/redis-cache/',
+		'wp-redis'          => '/plugins/wp-redis/',
+		'memcached'         => '/plugins/memcached/',
+		'object-cache-pro'  => '/plugins/object-cache-pro/',
+		'litespeed-cache'   => '/plugins/litespeed-cache/',
 	];
 
 	/**
@@ -533,40 +546,65 @@ class File_Safety_Analyzer {
 			}
 		}
 
-		// Extract return type declarations (e.g., function foo(): ClassName).
-		if (preg_match_all('/\bfunction\s+\w+\s*\([^)]*\)\s*:\s*\??([\w\\\\]+)/', $content, $matches)) {
+		// Extract return type declarations.
+		// Handles: ClassName, ?ClassName, A|B, A&B, ?A|B (nullable union).
+		if (preg_match_all('/\bfunction\s+\w+\s*\([^)]*\)\s*:\s*\??([\w\\\\|&]+)/', $content, $matches)) {
 			foreach ($matches[1] as $return_type) {
-				// Skip primitive types.
-				$primitives = ['void', 'int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent', 'null', 'true', 'false'];
-				if (! in_array(strtolower($return_type), $primitives, true)) {
-					$result['dependencies'][] = $return_type;
-				}
+				$this->add_type_string_dependencies($return_type, $result);
 			}
 		}
 
-		// Extract parameter type declarations (e.g., function foo(ClassName $bar)).
-		if (preg_match_all('/\bfunction\s+\w+\s*\(\s*[^)]*\b([\w\\\\]+)\s+\$\w+/', $content, $matches)) {
+		// Extract parameter type declarations.
+		// Handles: ClassName $bar, ?ClassName $bar, A|B $bar.
+		if (preg_match_all('/(?:^|[(,])\s*\??([\w\\\\|&]+)\s+\$\w+/m', $content, $matches)) {
 			foreach ($matches[1] as $param_type) {
-				// Skip primitive types.
-				$primitives = ['int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent'];
-				if (! in_array(strtolower($param_type), $primitives, true)) {
-					$result['dependencies'][] = $param_type;
-				}
+				$this->add_type_string_dependencies($param_type, $result);
 			}
 		}
 
-		// Extract property type declarations (e.g., public ClassName $prop).
-		if (preg_match_all('/\b(?:public|protected|private)\s+(?:readonly\s+)?\??([\w\\\\]+)\s+\$\w+/', $content, $matches)) {
+		// Extract property type declarations.
+		// Handles: public ClassName $prop, private ?ClassName $prop, protected A|B $prop.
+		if (preg_match_all('/\b(?:public|protected|private)\s+(?:readonly\s+)?\??([\w\\\\|&]+)\s+\$\w+/', $content, $matches)) {
 			foreach ($matches[1] as $prop_type) {
-				// Skip primitive types.
-				$primitives = ['int', 'float', 'string', 'bool', 'array', 'object', 'callable', 'iterable', 'mixed', 'static', 'self', 'parent'];
-				if (! in_array(strtolower($prop_type), $primitives, true)) {
-					$result['dependencies'][] = $prop_type;
-				}
+				$this->add_type_string_dependencies($prop_type, $result);
 			}
 		}
 
 		$result['dependencies'] = array_unique($result['dependencies']);
+	}
+
+	/**
+	 * Parse a type string and add class dependencies.
+	 *
+	 * Handles union (A|B), intersection (A&B), and simple types.
+	 * Filters out primitive types (int, string, bool, etc.).
+	 *
+	 * @param string               $type_string The type string (e.g., "ClassName", "A|B", "A&B").
+	 * @param array<string, mixed> $result      Result array to add dependencies to.
+	 * @return void
+	 */
+	private function add_type_string_dependencies(string $type_string, array &$result): void {
+
+		$primitives = [
+			'void', 'int', 'float', 'string', 'bool', 'array', 'object',
+			'callable', 'iterable', 'mixed', 'static', 'self', 'parent',
+			'null', 'true', 'false', 'never',
+		];
+
+		// Split on | (union) and & (intersection) to get individual types.
+		$types = preg_split('/[|&]/', $type_string);
+
+		foreach ($types as $type) {
+			$type = ltrim(trim($type), '?');
+
+			if (empty($type)) {
+				continue;
+			}
+
+			if (! in_array(strtolower($type), $primitives, true)) {
+				$result['dependencies'][] = $type;
+			}
+		}
 	}
 
 	/**

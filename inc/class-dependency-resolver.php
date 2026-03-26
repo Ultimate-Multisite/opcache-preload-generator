@@ -62,7 +62,9 @@ class Dependency_Resolver {
 	private array $file_data = [];
 
 	/**
-	 * Core PHP classes that don't need to be resolved.
+	 * Core PHP classes and interfaces that don't need to be resolved.
+	 *
+	 * These are always available in PHP without requiring any file.
 	 *
 	 * @var array<string>
 	 */
@@ -86,19 +88,50 @@ class Dependency_Resolver {
 		'DateTimeInterface',
 		'DateInterval',
 		'DateTimeZone',
+		'DatePeriod',
 		'PDO',
 		'PDOStatement',
 		'PDOException',
 		'ReflectionClass',
 		'ReflectionMethod',
 		'ReflectionProperty',
+		'ReflectionFunction',
+		'ReflectionParameter',
+		'ReflectionType',
+		'ReflectionNamedType',
+		'ReflectionUnionType',
 		'ReflectionException',
 		'ArrayObject',
 		'SplFileInfo',
 		'SplFileObject',
 		'SplObjectStorage',
+		'SplPriorityQueue',
+		'SplStack',
+		'SplQueue',
+		'SplHeap',
+		'SplDoublyLinkedList',
+		'SplFixedArray',
 		'WeakReference',
 		'WeakMap',
+		'RuntimeException',
+		'InvalidArgumentException',
+		'LogicException',
+		'BadMethodCallException',
+		'OutOfRangeException',
+		'OverflowException',
+		'UnderflowException',
+		'UnexpectedValueException',
+		'LengthException',
+		'DomainException',
+		'RangeException',
+		'TypeError',
+		'ValueError',
+		'UnitEnum',
+		'BackedEnum',
+		'Fiber',
+		'FiberError',
+		'CurlHandle',
+		'GdImage',
 	];
 
 	/**
@@ -592,27 +625,78 @@ class DependencyVisitor implements NodeVisitor {
 			}
 		}
 
-		// Check for method return type declarations.
+		// Check for method return type and parameter type declarations.
 		if ($node instanceof Node\Stmt\ClassMethod) {
-			if ($node->returnType && $node->returnType instanceof Node\Name) {
-				$this->add_dependency($node->returnType->toString());
-			}
-			// Check parameter type declarations.
+			$this->add_type_dependencies($node->returnType);
 			foreach ($node->params as $param) {
-				if ($param->type && $param->type instanceof Node\Name) {
-					$this->add_dependency($param->type->toString());
-				}
+				$this->add_type_dependencies($param->type);
 			}
 		}
 
 		// Check for property type declarations.
 		if ($node instanceof Node\Stmt\Property) {
-			if ($node->type && $node->type instanceof Node\Name) {
-				$this->add_dependency($node->type->toString());
-			}
+			$this->add_type_dependencies($node->type);
 		}
 
 		return null;
+	}
+
+	/**
+	 * Extract dependencies from a type node.
+	 *
+	 * Handles all PHP type declaration forms:
+	 * - Simple: ClassName
+	 * - Nullable: ?ClassName (NullableType wrapping a Name)
+	 * - Union: A|B (UnionType containing Name nodes)
+	 * - Intersection: A&B (IntersectionType containing Name nodes)
+	 *
+	 * @param Node|null $type_node The type node from the AST.
+	 * @return void
+	 */
+	private function add_type_dependencies(?Node $type_node): void {
+
+		if (null === $type_node) {
+			return;
+		}
+
+		if ($type_node instanceof Node\Name) {
+			$this->add_dependency($type_node->toString());
+			return;
+		}
+
+		// ?ClassName — unwrap the nullable wrapper.
+		if ($type_node instanceof Node\NullableType) {
+			if ($type_node->type instanceof Node\Name) {
+				$this->add_dependency($type_node->type->toString());
+			}
+			return;
+		}
+
+		// A|B or A|B|null — iterate each type in the union.
+		if ($type_node instanceof Node\UnionType) {
+			foreach ($type_node->types as $inner) {
+				if ($inner instanceof Node\Name) {
+					$this->add_dependency($inner->toString());
+				} elseif ($inner instanceof Node\IntersectionType) {
+					// Union can contain intersection types (DNF types in PHP 8.2+).
+					foreach ($inner->types as $dnf_inner) {
+						if ($dnf_inner instanceof Node\Name) {
+							$this->add_dependency($dnf_inner->toString());
+						}
+					}
+				}
+			}
+			return;
+		}
+
+		// A&B — iterate each type in the intersection.
+		if ($type_node instanceof Node\IntersectionType) {
+			foreach ($type_node->types as $inner) {
+				if ($inner instanceof Node\Name) {
+					$this->add_dependency($inner->toString());
+				}
+			}
+		}
 	}
 
 	/**
@@ -625,15 +709,39 @@ class DependencyVisitor implements NodeVisitor {
 
 		$name = ltrim($name, '\\');
 
-		// Skip core classes.
+		// Skip primitive/built-in types (normally filtered as Identifier nodes,
+		// but guard against edge cases where NameResolver emits them as Name).
+		$primitives = [
+			'void', 'int', 'float', 'string', 'bool', 'array', 'object',
+			'callable', 'iterable', 'mixed', 'static', 'self', 'parent',
+			'null', 'true', 'false', 'never',
+		];
+
+		if (in_array(strtolower($name), $primitives, true)) {
+			return;
+		}
+
+		// Skip core PHP classes and interfaces.
 		$core_classes = [
 			'stdClass', 'Exception', 'Error', 'Throwable', 'Iterator', 'IteratorAggregate',
 			'ArrayAccess', 'Countable', 'Serializable', 'Traversable', 'JsonSerializable',
 			'Stringable', 'Closure', 'Generator', 'DateTime', 'DateTimeImmutable',
-			'DateTimeInterface', 'DateInterval', 'DateTimeZone', 'PDO', 'PDOStatement',
-			'PDOException', 'ReflectionClass', 'ReflectionMethod', 'ReflectionProperty',
-			'ReflectionException', 'ArrayObject', 'SplFileInfo', 'SplFileObject',
-			'SplObjectStorage', 'WeakReference', 'WeakMap',
+			'DateTimeInterface', 'DateInterval', 'DateTimeZone', 'DatePeriod',
+			'PDO', 'PDOStatement', 'PDOException',
+			'ReflectionClass', 'ReflectionMethod', 'ReflectionProperty',
+			'ReflectionFunction', 'ReflectionParameter', 'ReflectionType',
+			'ReflectionNamedType', 'ReflectionUnionType', 'ReflectionException',
+			'ArrayObject', 'SplFileInfo', 'SplFileObject', 'SplObjectStorage',
+			'SplPriorityQueue', 'SplStack', 'SplQueue', 'SplHeap',
+			'SplDoublyLinkedList', 'SplFixedArray',
+			'WeakReference', 'WeakMap',
+			'RuntimeException', 'InvalidArgumentException', 'LogicException',
+			'BadMethodCallException', 'OutOfRangeException', 'OverflowException',
+			'UnderflowException', 'UnexpectedValueException', 'LengthException',
+			'DomainException', 'RangeException', 'TypeError', 'ValueError',
+			'UnitEnum', 'BackedEnum',
+			'Fiber', 'FiberError',
+			'CurlHandle', 'GdImage',
 		];
 
 		if (in_array($name, $core_classes, true)) {

@@ -88,10 +88,18 @@ class Preload_Generator {
 	}
 
 	/**
-	 * Sort files by dependency order and skip unresolvable files.
+	 * Sort files by dependency order and assign preload method.
 	 *
-	 * All files use opcache_compile_file (compile-only, no execution) to avoid
-	 * dependency ordering issues that require_once would introduce.
+	 * require_once is used when ALL of these conditions hold:
+	 * 1. File has only declarations (no side effects) — checked by safety analyzer.
+	 * 2. All dependencies are resolved — their files are in the preload list.
+	 * 3. All dependency files also use require_once — if any dep uses
+	 *    opcache_compile_file, its class won't be defined at preload time,
+	 *    so require_once on the child would crash PHP-FPM.
+	 *
+	 * opcache_compile_file is used for everything else. It compiles bytecode into
+	 * the opcode cache (faster loading) but doesn't define symbols globally.
+	 * It handles missing parent classes gracefully (non-fatal warning).
 	 *
 	 * @param array<string|array<string, mixed>> $files   Array of file paths or file config arrays.
 	 * @param array<string, mixed>               $options Generation options.
@@ -100,8 +108,7 @@ class Preload_Generator {
 	private function sort_files_by_dependencies(array $files, array $options): array {
 
 		// Normalize files to config array format and extract paths.
-		$normalized = [];
-		$paths      = [];
+		$paths = [];
 
 		foreach ($files as $file) {
 			if (is_array($file)) {
@@ -114,11 +121,7 @@ class Preload_Generator {
 				continue;
 			}
 
-			$paths[]      = $path;
-			$normalized[] = [
-				'path'   => $path,
-				'method' => 'opcache_compile_file',
-			];
+			$paths[] = $path;
 		}
 
 		if (empty($paths)) {
@@ -130,38 +133,22 @@ class Preload_Generator {
 		$this->dependency_resolver->build_class_map($paths);
 
 		// Sort by dependencies.
-		$sorted = $this->dependency_resolver->sort_by_dependencies($paths);
-
-		// Build result with proper method assignment.
-		$result       = [];
+		$sorted       = $this->dependency_resolver->sort_by_dependencies($paths);
 		$sorted_paths = $sorted['sorted'];
 		$unresolvable = $sorted['unresolvable'];
-
-		// Create a lookup for original method settings.
-		$method_lookup = [];
-		foreach ($normalized as $file) {
-			$method_lookup[ $file['path'] ] = $file['method'];
-		}
 
 		// Reset skipped files tracking.
 		$this->skipped_files = [];
 
-		// Determine method per file. require_once is used when BOTH conditions hold:
-		// 1. File has only declarations (no side effects) — checked by tokenizer.
-		// 2. All dependencies are resolved — extends/implements/use-trait targets are
-		// either PHP/WP built-ins or files earlier in the sorted preload list.
-		// This makes the class/interface/function globally available from PHP start,
-		// with zero per-request loading cost.
-		//
-		// opcache_compile_file is used for everything else. It compiles bytecode into
-		// the opcode cache (faster loading) but doesn't define symbols globally —
-		// the file still needs to be required at runtime. It handles missing parent
-		// classes gracefully (non-fatal "Can't preload unlinked class" warning).
-		$resolved_paths = [];
+		// Track which files have been assigned require_once so we can check
+		// whether a file's dependencies will actually be defined at preload time.
+		$require_once_files = [];
+
+		$result = [];
 
 		foreach ($sorted_paths as $path) {
 			$unresolved = $this->dependency_resolver->get_unresolved_dependencies($path, $sorted_paths);
-			$deps = $this->dependency_resolver->get_file_dependencies($path);
+			$deps       = $this->dependency_resolver->get_file_dependencies($path);
 
 			if (! empty($unresolved)) {
 				$this->skipped_files[] = [
@@ -171,32 +158,16 @@ class Preload_Generator {
 				];
 			}
 
-			// Use require_once only when safe: no side effects AND all deps resolved.
-			if (empty($unresolved)) {
-				$method = 'require_once';
-				// Check the file itself and all its dependencies for side effects.
-				$files_to_check = [$path];
-				foreach ($deps as $dep_class) {
-					$dep_file = $this->dependency_resolver->get_class_file($dep_class);
-					if ($dep_file) {
-						$files_to_check[] = $dep_file;
-					}
-				}
-				foreach ($files_to_check as $check_path) {
-					if ($this->safety_analyzer->get_recommended_method($check_path) !== 'require_once') {
-						$method = 'opcache_compile_file';
-						break;
-					}
-				}
-			} else {
-				$method = 'opcache_compile_file';
+			$method = $this->determine_preload_method($path, $deps, $unresolved, $require_once_files);
+
+			if ('require_once' === $method) {
+				$require_once_files[ $path ] = true;
 			}
 
-			$result[]         = [
+			$result[] = [
 				'path'   => $path,
 				'method' => $method,
 			];
-			$resolved_paths[] = $path;
 		}
 
 		// Include unresolvable files too (circular dependencies).
@@ -215,6 +186,52 @@ class Preload_Generator {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Determine the preload method for a single file.
+	 *
+	 * @param string        $path                File path.
+	 * @param array<string> $deps                Dependency class names.
+	 * @param array<string> $unresolved          Unresolved dependency class names.
+	 * @param array<string, bool> $require_once_files Files already assigned require_once.
+	 * @return string 'require_once' or 'opcache_compile_file'.
+	 */
+	private function determine_preload_method(string $path, array $deps, array $unresolved, array $require_once_files): string {
+
+		// Any unresolved dependencies → must use opcache_compile_file.
+		if (! empty($unresolved)) {
+			return 'opcache_compile_file';
+		}
+
+		// Check the file itself for side effects.
+		if ($this->safety_analyzer->get_recommended_method($path) !== 'require_once') {
+			return 'opcache_compile_file';
+		}
+
+		// Check every dependency: its file must also use require_once.
+		// If a dependency file uses opcache_compile_file, its class won't be
+		// defined at preload time, so require_once on this file would crash.
+		foreach ($deps as $dep_class) {
+			$dep_file = $this->dependency_resolver->get_class_file($dep_class);
+
+			if (null === $dep_file) {
+				// Dependency not in our file list — can't guarantee it's defined.
+				continue;
+			}
+
+			// Dependency file uses opcache_compile_file → class won't be defined.
+			if (! isset($require_once_files[ $dep_file ])) {
+				return 'opcache_compile_file';
+			}
+
+			// Also check the dependency file itself for side effects.
+			if ($this->safety_analyzer->get_recommended_method($dep_file) !== 'require_once') {
+				return 'opcache_compile_file';
+			}
+		}
+
+		return 'require_once';
 	}
 
 	/**
