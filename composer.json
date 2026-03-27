@@ -1,63 +1,63 @@
 {
-    "name": "devstone/opcache-preload-generator",
-    "url": "https://MultisiteUltimate.com",
-    "description": "Generate OPcache preload files based on runtime statistics with safety analysis.",
-    "version": "1.0.0",
-    "authors": [
-        {
-            "name": "David Stone",
-            "homepage": "https://github.com/superdav42"
-        }
-    ],
-    "license": [
-        "GPL-3.0-or-later"
-    ],
-    "autoload": {
-        "psr-4": {
-            "OPcache_Preload_Generator\\": "inc/"
-        }
-    },
-    "type": "wordpress-plugin",
-    "require": {
-        "php": ">=7.4.1",
-        "ext-json": "*",
-        "nikic/php-parser": "^4.19"
-    },
-    "require-dev": {
-        "composer/installers": "^1.9.0",
-        "phpunit/phpunit": "^9.6.22",
-        "yoast/phpunit-polyfills": "^1.1.3",
-        "woocommerce/woocommerce-sniffs": "^1.0.0",
-        "fakerphp/faker": "^1.24",
-        "szepeviktor/phpstan-wordpress": "^2.0.1",
-        "phpstan/extension-installer": "^1.1"
-    },
-    "config": {
-        "platform": {
-            "php": "7.4.1"
-        },
-        "allow-plugins": {
-            "composer/installers": true,
-            "dealerdirect/phpcodesniffer-composer-installer": true,
-            "phpstan/extension-installer": true
-        },
-        "optimize-autoloader": true,
-        "classmap-authoritative": true
-    },
-    "archive": {
-        "exclude": [
-            "tests",
-            "bin",
-            "phpunit.xml.dist",
-            "composer.lock",
-            ".phpcs.xml.dist",
-            ".idea",
-            "node_modules",
-            ".gitignore",
-            ".phpunit.result.cache",
-            "package.json",
-            "package-lock.json",
-            "phpstan.neon.dist"
-        ]
+  "name": "devstone/opcache-preload-generator",
+  "url": "https://MultisiteUltimate.com",
+  "description": "Generate OPcache preload files based on runtime statistics with safety analysis.",
+  "version": "1.1.0",
+  "authors": [
+    {
+      "name": "David Stone",
+      "homepage": "https://github.com/superdav42"
     }
+  ],
+  "license": [
+    "GPL-3.0-or-later"
+  ],
+  "autoload": {
+    "psr-4": {
+      "OPcache_Preload_Generator\\": "inc/"
+    }
+  },
+  "type": "wordpress-plugin",
+  "require": {
+    "php": ">=7.4.1",
+    "ext-json": "*",
+    "nikic/php-parser": "^4.19"
+  },
+  "require-dev": {
+    "composer/installers": "^1.9.0",
+    "phpunit/phpunit": "^9.6.22",
+    "yoast/phpunit-polyfills": "^1.1.3",
+    "woocommerce/woocommerce-sniffs": "^1.0.0",
+    "fakerphp/faker": "^1.24",
+    "szepeviktor/phpstan-wordpress": "^2.0.1",
+    "phpstan/extension-installer": "^1.1"
+  },
+  "config": {
+    "platform": {
+      "php": "7.4.1"
+    },
+    "allow-plugins": {
+      "composer/installers": true,
+      "dealerdirect/phpcodesniffer-composer-installer": true,
+      "phpstan/extension-installer": true
+    },
+    "optimize-autoloader": true,
+    "classmap-authoritative": true
+  },
+  "archive": {
+    "exclude": [
+      "tests",
+      "bin",
+      "phpunit.xml.dist",
+      "composer.lock",
+      ".phpcs.xml.dist",
+      ".idea",
+      "node_modules",
+      ".gitignore",
+      ".phpunit.result.cache",
+      "package.json",
+      "package-lock.json",
+      "phpstan.neon.dist"
+    ]
+  }
 }

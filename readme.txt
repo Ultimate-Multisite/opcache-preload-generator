@@ -4,7 +4,7 @@ Tags: opcache, preload, performance, optimization, php
 Requires at least: 5.3
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -81,6 +81,17 @@ Yes, but be cautious. Plugin files may have dependencies on WordPress core funct
 
 == Changelog ==
 
+= 1.1.0 =
+* New: Automatic optimization — the plugin now analyzes your site's OPcache usage and suggests the best files to preload, no manual configuration needed
+* New: Dependency resolution — preloaded files are now ordered correctly so classes that depend on other classes load in the right sequence, preventing errors
+* New: Threshold slider in the admin UI — easily adjust how aggressively the optimizer selects files for preloading
+* Improved: Completely redesigned admin interface — cleaner layout, easier to understand at a glance
+* Improved: Parent directory now shown in optimization logs so you can tell apart files with the same name from different plugins
+* Fixed: Files with WordPress security checks (ABSPATH) are now correctly identified and handled during preloading
+* Fixed: Safety analyzer now properly catches WordPress core constant definitions that could cause conflicts
+* Fixed: Resolved race conditions in the auto-optimizer that could generate incomplete preload files
+* Fixed: Property type declarations in PHP 7.4+ are now correctly analyzed for dependencies
+
 = 1.0.0 =
 * Initial release
 * OPcache status analysis
@@ -89,6 +100,9 @@ Yes, but be cautious. Plugin files may have dependencies on WordPress core funct
 * Admin interface with file management
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+Major update with automatic optimization, dependency resolution, and a redesigned admin interface. Recommended for all users.
 
 = 1.0.0 =
 Initial release of OPcache Preload Generator.

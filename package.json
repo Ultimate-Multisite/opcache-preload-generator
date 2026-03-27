@@ -1,12 +1,14 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "opcache-preload-generator",
   "title": "OPcache Preload Generator",
   "homepage": "https://multisiteultimate.com/",
-  "authors": [{
-    "name": "David Stone",
-    "email": "david@multisiteultimate.com"
-  }],
+  "authors": [
+    {
+      "name": "David Stone",
+      "email": "david@multisiteultimate.com"
+    }
+  ],
   "devDependencies": {
     "clean-css-cli": "^5.6.3",
     "uglify-js": "^3.19.3"

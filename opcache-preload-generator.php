@@ -4,7 +4,7 @@
  * Description: Generate OPcache preload files based on runtime statistics with safety analysis.
  * Plugin URI: https://multisiteultimate.com
  * Text Domain: opcache-preload-generator
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: David Stone - Multisite Ultimate
  * Author URI: https://multisiteultimate.com
  * Copyright: David Stone, Multisite Ultimate
@@ -21,7 +21,7 @@ if (! defined('ABSPATH')) {
 }
 
 // Define addon constants.
-define('OPCACHE_PRELOAD_VERSION', '1.0.11');
+define('OPCACHE_PRELOAD_VERSION', '1.1.0');
 define('OPCACHE_PRELOAD_PLUGIN_FILE', __FILE__);
 define('OPCACHE_PRELOAD_DIR', plugin_dir_path(__FILE__));
 define('OPCACHE_PRELOAD_URL', plugin_dir_url(__FILE__));
