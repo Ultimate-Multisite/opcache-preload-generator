@@ -51,11 +51,11 @@ Tests run in multisite mode (`WP_TESTS_MULTISITE=1`).
 │   ├── class-file-safety-analyzer.php  # Preload safety checks
 │   ├── class-preload-generator.php     # Generates preload.php files
 │   ├── class-dependency-resolver.php   # Class dependency ordering
-│   ├── class-preload-tester.php        # Tests preload file validity
-│   ├── class-auto-optimizer.php        # Automatic optimization
 │   ├── class-admin-page.php            # WordPress admin UI
 │   ├── class-ajax-handler.php          # AJAX endpoints
-│   └── class-file-list-table.php       # WP_List_Table implementation
+│   ├── class-cli-command.php           # WP-CLI commands
+│   ├── class-file-list-table.php       # WP_List_Table implementation
+│   └── class-rest-api.php             # REST API endpoints
 ├── tests/                         # PHPUnit tests (suffix: *Test.php)
 ├── views/                         # PHP template files
 └── assets/                        # CSS/JS assets
