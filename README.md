@@ -1,5 +1,7 @@
 # OPcache Preload Generator
 
+[![Download Plugin Now](https://img.shields.io/github/v/release/Ultimate-Multisite/opcache-preload-generator?style=for-the-badge&label=Download+Plugin+Now&color=0073aa)](https://github.com/Ultimate-Multisite/opcache-preload-generator/releases/latest/download/opcache-preload-generator.zip) &nbsp; Upload the zip to WordPress like any other plugin
+
 > ⚠️ **Advanced Users Only** - This plugin is intended for system administrators and developers. It requires server-level access to modify `php.ini` and restart PHP processes.
 >
 > 🚫 **Not for Shared Hosting** - OPcache preloading requires dedicated server access. This will **NOT work** on shared hosting environments where you don't have control over the PHP configuration.
