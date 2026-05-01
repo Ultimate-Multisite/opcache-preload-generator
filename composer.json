@@ -59,10 +59,5 @@
       "package-lock.json",
       "phpstan.neon.dist"
     ]
-  },
-  "autoload-dev": {
-    "files": [
-      "vendor/php-stubs/wordpress-stubs/wordpress-stubs.php"
-    ]
   }
 }
