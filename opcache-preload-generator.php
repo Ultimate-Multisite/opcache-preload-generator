@@ -9,7 +9,7 @@
  * Author URI: https://multisiteultimate.com
  * Copyright: David Stone, Multisite Ultimate
  * Requires at least: 5.3
- * Tested up to: 7.0
+ * Tested up to: 7.1
  * Requires PHP: 7.4
  *
  * @package OPcache_Preload_Generator

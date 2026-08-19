@@ -2,7 +2,7 @@
 Contributors: superdav42
 Tags: opcache, preload, performance, optimization, php
 Requires at least: 5.3
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.4
 Stable tag: 1.1.0
 License: GPLv3 or later
