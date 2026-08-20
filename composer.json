@@ -2,7 +2,7 @@
   "name": "devstone/opcache-preload-generator",
   "url": "https://MultisiteUltimate.com",
   "description": "Generate OPcache preload files based on runtime statistics with safety analysis.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "authors": [
     {
       "name": "David Stone",
