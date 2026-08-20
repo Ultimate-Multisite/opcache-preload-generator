@@ -22,7 +22,7 @@ class Plugin {
 	 *
 	 * @var string
 	 */
-	public string $version = '1.0.0';
+	public string $version = '1.1.1';
 
 	/**
 	 * Single instance of the class.
