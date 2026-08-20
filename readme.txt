@@ -4,7 +4,7 @@ Tags: opcache, preload, performance, optimization, php
 Requires at least: 5.3
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -80,6 +80,10 @@ Some files have code that executes immediately when included, or have dependenci
 Yes, but be cautious. Plugin files may have dependencies on WordPress core functions that aren't available during preload. The safety analyzer helps identify these issues.
 
 == Changelog ==
+
+= 1.1.1 =
+Version 1.1.1 - Released on 2026-08-19
+- Improved: WordPress compatibility metadata now reflects testing through WordPress 7.1.
 
 = 1.1.0 =
 * New: Automatic optimization — the plugin now analyzes your site's OPcache usage and suggests the best files to preload, no manual configuration needed
